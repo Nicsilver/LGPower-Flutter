@@ -21,10 +21,15 @@ Future<Color?> showColorPicker(
     barrierColor: Colors.black.withValues(alpha: 0.55),
     pageBuilder: (dialogContext, animation, secondaryAnimation) {
       final width = MediaQuery.of(dialogContext).size.width - 56;
+      // showGeneralDialog (unlike showDialog's DialogRoute) doesn't supply a
+      // Material ancestor itself -- the hex TextField below needs one.
       return Center(
-        child: SizedBox(
-          width: width,
-          child: _ColorPickerContent(title: title, initial: initial, theme: theme),
+        child: Material(
+          type: MaterialType.transparency,
+          child: SizedBox(
+            width: width,
+            child: _ColorPickerContent(title: title, initial: initial, theme: theme),
+          ),
         ),
       );
     },
