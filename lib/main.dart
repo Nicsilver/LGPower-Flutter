@@ -45,6 +45,15 @@ class LgPowerApp extends StatelessWidget {
       child: MaterialApp(
         title: 'LG Power',
         debugShowCheckedModeBanner: false,
+        // An imperative setSystemUIOverlayStyle call gets overridden by the
+        // framework's own per-frame style; an AnnotatedRegion wins every frame.
+        builder: (context, child) => ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) => AnnotatedRegion<SystemUiOverlayStyle>(
+            value: ThemeManager.overlayStyle(controller.theme),
+            child: child ?? const SizedBox.shrink(),
+          ),
+        ),
         home: prefs.tvIp.isEmpty ? SetupScreen(client: client) : const MainScreen(),
       ),
     );

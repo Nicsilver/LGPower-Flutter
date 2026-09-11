@@ -244,6 +244,13 @@ class _SetupScreenState extends State<SetupScreen> {
             ],
           ),
         ),
+        // Discovery can list the wrong box (or miss a TV on another VLAN), so
+        // typing an address stays available even when something was found.
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: GhostButton(label: 'Enter IP manually', height: 48, onPressed: _showManualIpDialog),
+        ),
       ],
     );
   }

@@ -170,14 +170,18 @@ class ThemeManager {
   /// Flutter side of the theming contract every screen applies (spec 0.2).
   /// iOS has no navigation bar and only honours `statusBarBrightness`.
   static void applySystemChrome(ThemeConfig theme) {
+    SystemChrome.setSystemUIOverlayStyle(overlayStyle(theme));
+  }
+
+  static SystemUiOverlayStyle overlayStyle(ThemeConfig theme) {
     final iconBrightness = theme.statusBarLightIcons ? Brightness.dark : Brightness.light;
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+    return SystemUiOverlayStyle(
       statusBarColor: theme.windowBg,
       statusBarIconBrightness: iconBrightness,
       statusBarBrightness: theme.statusBarLightIcons ? Brightness.light : Brightness.dark,
       systemNavigationBarColor: theme.windowBg,
       systemNavigationBarIconBrightness: iconBrightness,
-    ));
+    );
   }
 }
 

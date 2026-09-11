@@ -25,6 +25,12 @@ Future<void> showPickerSheet(
     context: context,
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: 0.5),
+    // The default sheet caps itself at ~9/16 of the screen, which clips the
+    // nine picture modes; size to content instead and scroll past 85 %.
+    isScrollControlled: true,
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+    ),
     // The Material default sheet shape/clip would round its own corners on
     // top of the windowBg container painting its own 20dp top radius below.
     shape: const RoundedRectangleBorder(),
@@ -42,35 +48,46 @@ Future<void> showPickerSheet(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(padding: const EdgeInsets.only(bottom: 8), child: SectionLabel(title)),
-            SurfaceCard(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < rows.length; i++) ...[
-                    if (i > 0) const RowDivider(),
-                    _PickerRowTile(
-                      row: rows[i],
-                      theme: theme,
-                      onTap: () async {
-                        // Let the ripple show before the sheet goes away.
-                        await Future.delayed(const Duration(milliseconds: 110));
-                        if (sheetContext.mounted) Navigator.of(sheetContext).pop();
-                        onSelect(rows[i].$1);
-                      },
-                      onLongPress: onLongPress == null
-                          ? null
-                          : () {
-                              // Flutter has no equivalent of Android's
-                              // HapticFeedbackConstants.LONG_PRESS; heavyImpact
-                              // is the closest built-in analog.
-                              HapticFeedback.heavyImpact();
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: SectionLabel(title),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                child: SurfaceCard(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var i = 0; i < rows.length; i++) ...[
+                        if (i > 0) const RowDivider(),
+                        _PickerRowTile(
+                          row: rows[i],
+                          theme: theme,
+                          onTap: () async {
+                            // Let the ripple show before the sheet goes away.
+                            await Future.delayed(
+                              const Duration(milliseconds: 110),
+                            );
+                            if (sheetContext.mounted) {
                               Navigator.of(sheetContext).pop();
-                              onLongPress(rows[i].$1);
-                            },
-                    ),
-                  ],
-                ],
+                            }
+                            onSelect(rows[i].$1);
+                          },
+                          onLongPress: onLongPress == null
+                              ? null
+                              : () {
+                                  // Flutter has no equivalent of Android's
+                                  // HapticFeedbackConstants.LONG_PRESS; heavyImpact
+                                  // is the closest built-in analog.
+                                  HapticFeedback.heavyImpact();
+                                  Navigator.of(sheetContext).pop();
+                                  onLongPress(rows[i].$1);
+                                },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
           ],
@@ -110,7 +127,10 @@ class _PickerRowTile extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text(label, style: TextStyle(fontSize: 15, color: theme.primaryText)),
+                child: Text(
+                  label,
+                  style: TextStyle(fontSize: 15, color: theme.primaryText),
+                ),
               ),
               if (ticked)
                 Text(
