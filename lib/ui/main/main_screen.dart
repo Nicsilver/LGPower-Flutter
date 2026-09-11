@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/prefs.dart';
+import '../../net/ir.dart';
 import '../../net/webos_client.dart';
 import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
@@ -395,6 +396,7 @@ class _MainScreenState extends State<MainScreen>
           labelTopMargin: 5,
           semanticLabel: 'Power',
           onTap: () => unawaited(_controller.tapPower()),
+          onLongPress: _onPowerLongPress,
           child: const AppIcon('ic_power', size: 24),
         ),
         const SizedBox(width: 28),
@@ -422,6 +424,19 @@ class _MainScreenState extends State<MainScreen>
         ),
       ],
     );
+  }
+
+  // The haptic always fires (matches the platform's own long-press feedback
+  // on Android); only the actual IR send is conditional on hardware.
+  void _onPowerLongPress() {
+    HapticFeedback.heavyImpact();
+    unawaited(_transmitPowerIr());
+  }
+
+  Future<void> _transmitPowerIr() async {
+    if (await Ir.hasEmitter()) {
+      await Ir.transmit(38000, Ir.necPattern(Ir.lgPowerCode));
+    }
   }
 
   Widget _iconCell({

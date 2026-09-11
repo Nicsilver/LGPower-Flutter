@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.TRANSMIT_IR"/>
+    <uses-feature android:name="android.hardware.consumerir" android:required="false"/>
     <application
         android:label="LG Power"
         android:name="${applicationName}"

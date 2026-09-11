@@ -25,6 +25,10 @@ Future<void> showWarningSheet(
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: 0.55),
     shape: const RoundedRectangleBorder(),
+    // The Kotlin dialog is WRAP_CONTENT height with no cap; without this the
+    // default modal sheet clamps to a fraction of the screen and a long body
+    // (e.g. the service remote's factory-controls warning) overflows it.
+    isScrollControlled: true,
     builder: (_) => _WarningSheet(theme: theme, chip: chip, title: title, body: body, buttonLabel: button),
   );
   if (accepted ?? false) {

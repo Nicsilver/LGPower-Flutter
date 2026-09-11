@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../net/ir.dart';
 import '../../net/tv_discovery.dart';
 import '../../net/webos_client.dart';
 import '../../theme/release_notes.dart';
@@ -62,6 +63,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String _version = '';
 
+  bool _hasIrEmitter = false;
+
   @override
   void initState() {
     super.initState();
@@ -77,11 +80,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _selected = widget.client.loadShortcuts();
     _apps = List.of(_selected);
     _loadVersion();
+    _loadIrEmitter();
   }
 
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
     if (mounted) setState(() => _version = info.version);
+  }
+
+  Future<void> _loadIrEmitter() async {
+    final hasEmitter = await Ir.hasEmitter();
+    if (mounted) setState(() => _hasIrEmitter = hasEmitter);
   }
 
   void _onIpFocusChange() {
@@ -342,7 +351,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _section('Controls', child: _controlsGroup(theme)),
               _section('App Shortcuts', child: _shortcutsGroup(theme)),
               _section('Appearance', child: _appearanceGroup(theme)),
-              _section('Advanced', child: _advancedGroup(theme)),
+              if (_hasIrEmitter) _section('Advanced', child: _advancedGroup(theme)),
               _section('About', child: _aboutGroup(theme)),
             ],
           ),
