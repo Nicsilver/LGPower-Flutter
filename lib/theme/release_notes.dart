@@ -1,0 +1,164 @@
+/// Mirrors `ReleaseNotes.kt`. `code` is the versionCode that shipped the
+/// release; everything before 1.22.0 shipped as versionCode 1, which is
+/// harmless because [ReleaseNotes.since] is only ever compared against codes
+/// from 1.30.0 onwards (the first release that stored a `last_seen_version`
+/// marker). Keep notes to one line each — the dialog renders each as a row.
+class Release {
+  const Release(this.code, this.name, this.date, this.notes);
+
+  final int code;
+  final String name;
+  final String date;
+  final List<String> notes;
+}
+
+class ReleaseNotes {
+  ReleaseNotes._();
+
+  static List<Release> since(int lastSeenCode) =>
+      all.where((r) => r.code > lastSeenCode).toList();
+
+  // Newest first — ported verbatim from the Kotlin source (spec 5.3).
+  static const List<Release> all = [
+    Release(35, '1.31.2', '2026-09-11', [
+      'Touchpad lock grows out of the button, 0.6 s hold',
+      'Touchpad overlay follows light themes',
+    ]),
+    Release(34, '1.31.1', '2026-09-11', [
+      'Locked to portrait',
+      'Picker rows light up when tapped',
+      'No flash of the old theme when switching themes',
+    ]),
+    Release(33, '1.31.0', '2026-09-10', [
+      'Power widget works over Wi-Fi and Wake-on-LAN, IR only as a fallback',
+      'Widgets no longer say LG C4 in the widget picker',
+    ]),
+    Release(32, '1.30.0', '2026-09-07', [
+      "Connection dot follows the TV's real power state, no more flicker",
+      'Power button works when the TV is in standby',
+      'TV shows as off the instant you turn it off',
+      'Release notes in Settings › About',
+    ]),
+    Release(31, '1.29.1', '2026-09-07', [
+      'Brightness and picture mode work again on webOS 25 and 26',
+    ]),
+    Release(30, '1.29.0', '2026-09-01', [
+      'Numpad mode behind the 123 button',
+    ]),
+    Release(29, '1.28.1', '2026-08-31', [
+      'Main remote fits 360dp screens',
+      'Pairing screen gives up after 30 seconds instead of spinning forever',
+    ]),
+    Release(28, '1.28.0', '2026-08-31', [
+      'Pairing fixed on webOS 25 and 26',
+      'Netflix replaces Stremio as a default shortcut',
+    ]),
+    Release(27, '1.27.0', '2026-08-31', [
+      'IR service remote for factory menus, under Settings › Advanced',
+    ]),
+    Release(26, '1.26.0', '2026-08-31', [
+      'TV traffic always goes over Wi-Fi, even if the phone prefers mobile data',
+      'Fixed a crash, discovery matching other devices, and the IP saving too early',
+    ]),
+    Release(25, '1.25.0', '2026-08-31', [
+      'Color button row stays open for repeated presses',
+    ]),
+    Release(24, '1.24.0', '2026-07-22', [
+      'Under the hood only: automatic Play Store publishing',
+    ]),
+    Release(23, '1.23.0', '2026-07-21', [
+      'Targets Android 16',
+    ]),
+    Release(22, '1.22.0', '2026-07-14', [
+      'First Google Play release',
+      'Theme editor and more built-in themes',
+    ]),
+    Release(1, '1.21.0', '2026-05-11', [
+      'First-time setup: find, pick and pair your TV',
+    ]),
+    Release(1, '1.20.0', '2026-05-11', [
+      'One persistent connection, snappier commands',
+      'Faster on/off detection',
+      'Redesigned picker sheets',
+    ]),
+    Release(1, '1.19.0', '2026-05-10', [
+      'Keyboard no longer pushes the remote around',
+    ]),
+    Release(1, '1.18.0', '2026-05-10', [
+      'Press animations on the d-pad, pills and buttons',
+      'Monochrome icon for themed icons on Android 13 and up',
+      'Light theme fixes for mute and screen-off',
+    ]),
+    Release(1, '1.17.0', '2026-05-08', [
+      'Themes: light, dark and Darcula',
+    ]),
+    Release(1, '1.16.0', '2026-05-08', [
+      'Redesigned settings screen',
+      'IR power moved to a long-press on Power',
+      'Color buttons',
+      'Long-press Back sends Exit',
+    ]),
+    Release(1, '1.15.0', '2026-05-05', [
+      'Sound mode picker',
+    ]),
+    Release(1, '1.14.0', '2026-05-04', [
+      'Wake on LAN: Power and shortcuts turn the TV on',
+      'Home button above the d-pad',
+      'Channel up/down as an alternative to brightness',
+      'Fixed a crash when no TV IP was set',
+    ]),
+    Release(1, '1.13.0', '2026-04-13', [
+      'Picture mode picker with the current mode highlighted',
+      'Back and Menu moved below the d-pad',
+    ]),
+    Release(1, '1.12.0', '2026-04-13', [
+      'Two-finger scroll in locked touchpad mode',
+    ]),
+    Release(1, '1.11.0', '2026-04-13', [
+      'New keyboard sheet',
+      "Screen-off and input icons match LG's",
+    ]),
+    Release(1, '1.10.0', '2026-04-12', [
+      'Long-press Power turns the TV off over Wi-Fi',
+      'More accurate connection dot',
+      'Touchpad: tap to click, faster lock, smoother tracking',
+    ]),
+    Release(1, '1.9.0', '2026-04-12', [
+      'Volume and brightness pills drag like sliders, with haptic ticks',
+      'Mute and screen-off buttons show their state',
+      'Input source picker',
+      'Last volume and brightness restored on open',
+    ]),
+    Release(1, '1.8.0', '2026-04-12', [
+      'Volume and brightness levels shown in the pills',
+    ]),
+    Release(1, '1.7.0', '2026-04-10', [
+      'Connection dot refreshes while the app is open',
+    ]),
+    Release(1, '1.6.0', '2026-04-10', [
+      'Connection status dot',
+      'TV found automatically on startup',
+    ]),
+    Release(1, '1.5.0', '2026-04-10', [
+      'Fixed the app switcher icon',
+    ]),
+    Release(1, '1.4.0', '2026-04-10', [
+      'Phone volume keys control the TV',
+      'New app icon',
+    ]),
+    Release(1, '1.3.0', '2026-04-09', [
+      'Brightness up and down buttons',
+    ]),
+    Release(1, '1.2.0', '2026-04-09', [
+      'Widget icons dimmed to match system icons',
+    ]),
+    Release(1, '1.1.0', '2026-04-09', [
+      'Home screen widgets for app shortcuts',
+    ]),
+    Release(1, '1.0.0', '2026-04-09', [
+      'First release: d-pad, volume, touchpad, keyboard and app shortcuts over Wi-Fi',
+      'IR power, OK and screen-off widgets',
+      'Finds the TV on your network automatically',
+    ]),
+  ];
+}
