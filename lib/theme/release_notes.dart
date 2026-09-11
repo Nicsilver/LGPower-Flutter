@@ -20,6 +20,12 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(37, '1.33.0', '2026-09-11', [
+      'Keep screen on toggle in Settings, for a phone used as a dedicated remote',
+    ]),
+    Release(36, '1.32.0', '2026-09-11', [
+      "Enter the TV's IP address by hand in setup, for TVs on another VLAN or wired through a dongle",
+    ]),
     Release(35, '1.31.2', '2026-09-11', [
       'Touchpad lock grows out of the button, 0.6 s hold',
       'Touchpad overlay follows light themes',

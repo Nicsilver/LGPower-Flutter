@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wakelock_plus_platform_interface/messages.g.dart';
 
 import 'package:lgpower/core/prefs.dart';
 import 'package:lgpower/net/webos_client.dart';
@@ -15,6 +16,15 @@ import 'package:lgpower/ui/main/widgets/level_pill.dart';
 import 'package:lgpower/ui/main/widgets/numpad_page.dart';
 
 const _packageInfoChannel = MethodChannel('dev.fluttercommunity.plus/package_info');
+
+// MainScreen calls WakelockPlus on every bootstrap/resume regardless of the
+// keep_screen_on pref's value (off just means "disable", still a real
+// platform call) -- without a mock reply the pigeon channel has no host-side
+// handler in a widget test and every call throws.
+const _wakelockToggleChannel = BasicMessageChannel<Object?>(
+  'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle',
+  WakelockPlusApi.pigeonChannelCodec,
+);
 
 /// Overrides every method that would otherwise touch a real socket. Presence
 /// is driven manually via [emit] so status-dot tests are deterministic.
@@ -114,6 +124,9 @@ void main() {
     }
     return null;
   });
+
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockDecodedMessageHandler<Object?>(_wakelockToggleChannel, (message) async => <Object?>[null]);
 
   testWidgets('remote labels are present', (tester) async {
     final prefs = await _freshPrefs();

@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/prefs.dart';
 import '../../net/webos_client.dart';
@@ -89,6 +90,7 @@ class _MainScreenState extends State<MainScreen>
       _touchpadOrNull = touchpad;
     });
     unawaited(controller.onResume());
+    unawaited(_syncWakelock());
     // Android only -- iOS has no way to intercept the hardware volume keys.
     if (!kIsWeb && Platform.isAndroid) {
       HardwareKeyboard.instance.addHandler(_onHardwareKey);
@@ -106,8 +108,24 @@ class _MainScreenState extends State<MainScreen>
     if (!_ready) return;
     if (state == AppLifecycleState.resumed) {
       unawaited(_controller.onResume());
+      unawaited(_syncWakelock());
     } else if (state == AppLifecycleState.paused) {
       _controller.onPause();
+      // Unconditional -- a backgrounded remote has no screen to keep on, and
+      // the wakelock would otherwise outlive the app going to the background.
+      unawaited(WakelockPlus.disable());
+    }
+  }
+
+  // Keep-screen-on only matters while this screen is actually the one on
+  // top (spec 05): enabled at bootstrap/resume when the pref is on, disabled
+  // wherever it's read as off.
+  Future<void> _syncWakelock() async {
+    if (!_ready) return;
+    if (_controller.prefs.keepScreenOn) {
+      await WakelockPlus.enable();
+    } else {
+      await WakelockPlus.disable();
     }
   }
 
@@ -132,6 +150,7 @@ class _MainScreenState extends State<MainScreen>
     _toastSub?.cancel();
     _controllerOrNull?.dispose();
     _touchpadOrNull?.dispose();
+    unawaited(WakelockPlus.disable());
     super.dispose();
   }
 
@@ -145,6 +164,9 @@ class _MainScreenState extends State<MainScreen>
     );
     // Spec §12: re-read right_pill_channel/shortcuts/theme on return.
     if (mounted) await _controller.onResume();
+    // keep_screen_on may have just changed in Settings; don't wait for the
+    // next lifecycle resume to pick it up.
+    if (mounted) await _syncWakelock();
   }
 
   void _onColorsTap() {
@@ -256,7 +278,9 @@ class _MainScreenState extends State<MainScreen>
           },
           child: Scaffold(
             backgroundColor: theme.windowBg,
-            body: Listener(
+            body: SafeArea(
+              bottom: false,
+              child: Listener(
               onPointerDown: _onRootPointerDown,
               behavior: HitTestBehavior.translucent,
               child: Stack(
@@ -283,6 +307,7 @@ class _MainScreenState extends State<MainScreen>
                   ),
                   TouchpadOverlayLayer(controller: _touchpad),
                 ],
+              ),
               ),
             ),
           ),

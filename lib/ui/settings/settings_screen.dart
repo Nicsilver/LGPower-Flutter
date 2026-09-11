@@ -14,6 +14,7 @@ import '../widgets/app_toast.dart';
 import '../widgets/picker_sheet.dart';
 import '../widgets/release_notes_dialog.dart';
 import '../widgets/section.dart';
+import '../widgets/warning_sheet.dart';
 import 'service_remote_screen.dart';
 import 'theme_editor_screen.dart';
 
@@ -50,6 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _volSlider = true;
   bool _brightnessSlider = true;
   bool _rightPillChannel = false;
+  bool _keepScreenOn = false;
 
   bool _detectingMac = false;
   bool _discovering = false;
@@ -71,6 +73,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _volSlider = prefs.volSlider;
     _brightnessSlider = prefs.brightnessSlider;
     _rightPillChannel = prefs.rightPillChannel;
+    _keepScreenOn = prefs.keepScreenOn;
     _selected = widget.client.loadShortcuts();
     _apps = List.of(_selected);
     _loadVersion();
@@ -462,8 +465,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
           setState(() => _rightPillChannel = v);
           widget.client.prefs.setRightPillChannel(v);
         }),
+        const RowDivider(),
+        _switchRow(theme, 'Keep screen on', _keepScreenOn, _onKeepScreenOnChanged),
       ],
     );
+  }
+
+  // Turning off never needs confirmation. Turning on flips the switch
+  // immediately for a responsive toggle, then shows the OLED warning; the
+  // pref is only written on accept, and a cancel (tap outside/back) flips
+  // the switch back off without ever having persisted anything (plan 05).
+  void _onKeepScreenOnChanged(bool value) {
+    setState(() => _keepScreenOn = value);
+    if (!value) {
+      widget.client.prefs.setKeepScreenOn(false);
+      return;
+    }
+    unawaited(showWarningSheet(
+      context,
+      chip: 'SCREEN STAYS ON',
+      title: 'Careful with OLED screens',
+      body: "The remote will keep the screen awake for as long as it's open, even if you put "
+          "the phone down. On an OLED phone that can burn the remote layout into the panel over "
+          "time, and it drains the battery. Meant for a spare phone used as a dedicated remote.",
+      button: 'Keep screen on',
+      onAccept: () => widget.client.prefs.setKeepScreenOn(true),
+      onCancel: () {
+        if (mounted) setState(() => _keepScreenOn = false);
+      },
+    ));
   }
 
   Widget _switchRow(ThemeConfig theme, String label, bool value, ValueChanged<bool> onChanged) {

@@ -50,6 +50,10 @@ class Prefs {
   Future<void> setRightPillChannel(bool value) =>
       _sp.setBool('right_pill_channel', value);
 
+  bool get keepScreenOn => _sp.getBool('keep_screen_on') ?? false;
+  Future<void> setKeepScreenOn(bool value) =>
+      _sp.setBool('keep_screen_on', value);
+
   int get lastVolume => _sp.getInt('last_volume') ?? -1;
   Future<void> setLastVolume(int value) => _sp.setInt('last_volume', value);
 

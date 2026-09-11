@@ -13,6 +13,7 @@ import 'package:lgpower/core/prefs.dart';
 import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/theme/theme_manager.dart';
 import 'package:lgpower/ui/settings/settings_screen.dart';
+import 'package:lgpower/ui/widgets/buttons.dart';
 
 import 'fake_path_provider.dart';
 
@@ -46,6 +47,50 @@ void main() {
       await tester.pump();
 
       expect(prefs.volSlider, isFalse);
+    });
+  });
+
+  group('Keep screen on', () {
+    testWidgets('cancelling the warning sheet flips the switch back off', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final (prefs, client, controller) = await _harness();
+      await tester.pumpWidget(_app(client, controller));
+      await tester.pump();
+
+      expect(prefs.keepScreenOn, isFalse);
+      await tester.ensureVisible(find.text('Keep screen on'));
+      await tester.tap(find.byType(Switch).last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Careful with OLED screens'), findsOneWidget);
+      expect((tester.widget(find.byType(Switch).last) as Switch).value, isTrue);
+
+      // Tapping the barrier (top of the screen, well above the sheet) is a
+      // cancel -- the switch flips back and the pref is never written.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Careful with OLED screens'), findsNothing);
+      expect((tester.widget(find.byType(Switch).last) as Switch).value, isFalse);
+      expect(prefs.keepScreenOn, isFalse);
+    });
+
+    testWidgets('accepting the warning sheet writes the pref', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final (prefs, client, controller) = await _harness();
+      await tester.pumpWidget(_app(client, controller));
+      await tester.pump();
+
+      await tester.ensureVisible(find.text('Keep screen on'));
+      await tester.tap(find.byType(Switch).last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(AccentButton));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Careful with OLED screens'), findsNothing);
+      expect((tester.widget(find.byType(Switch).last) as Switch).value, isTrue);
+      expect(prefs.keepScreenOn, isTrue);
     });
   });
 
