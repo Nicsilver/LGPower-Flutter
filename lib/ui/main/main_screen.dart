@@ -238,37 +238,56 @@ class _MainScreenState extends State<MainScreen>
       // spinner.
       return Scaffold(backgroundColor: theme.windowBg, body: const SizedBox.shrink());
     }
-    return Scaffold(
-      backgroundColor: theme.windowBg,
-      body: Listener(
-        onPointerDown: _onRootPointerDown,
-        behavior: HitTestBehavior.translucent,
-        child: Stack(
-          key: _rootKey,
-          children: [
-            ListenableBuilder(
-              listenable: _controller,
-              builder: (context, _) {
-                final dims = MainDims.of(context);
-                return Stack(
-                  children: [
-                    Positioned.fill(
-                      child: _numpadOpen
-                          ? NumpadPage(
-                              controller: _controller,
-                              onClose: () => setState(() => _numpadOpen = false),
-                            )
-                          : _buildMainColumn(theme, dims),
-                    ),
-                    _header(theme),
-                  ],
-                );
-              },
+    return ListenableBuilder(
+      listenable: _touchpad,
+      builder: (context, _) {
+        // Spec §12 onBackPressed: locked touchpad takes priority over the
+        // numpad page, otherwise fall through to the default (app exit).
+        final interceptBack = _touchpad.isLocked || _numpadOpen;
+        return PopScope(
+          canPop: !interceptBack,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop) return;
+            if (_touchpad.isLocked) {
+              _touchpad.exitTapped();
+            } else if (_numpadOpen) {
+              setState(() => _numpadOpen = false);
+            }
+          },
+          child: Scaffold(
+            backgroundColor: theme.windowBg,
+            body: Listener(
+              onPointerDown: _onRootPointerDown,
+              behavior: HitTestBehavior.translucent,
+              child: Stack(
+                key: _rootKey,
+                children: [
+                  ListenableBuilder(
+                    listenable: _controller,
+                    builder: (context, _) {
+                      final dims = MainDims.of(context);
+                      return Stack(
+                        children: [
+                          Positioned.fill(
+                            child: _numpadOpen
+                                ? NumpadPage(
+                                    controller: _controller,
+                                    onClose: () => setState(() => _numpadOpen = false),
+                                  )
+                                : _buildMainColumn(theme, dims),
+                          ),
+                          _header(theme),
+                        ],
+                      );
+                    },
+                  ),
+                  TouchpadOverlayLayer(controller: _touchpad),
+                ],
+              ),
             ),
-            TouchpadOverlayLayer(controller: _touchpad),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
