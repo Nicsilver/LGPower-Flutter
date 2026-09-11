@@ -437,7 +437,7 @@ class WebOsClient {
     return extractMacAddress(reply.payload);
   }
 
-  Future<void> sendWakeOnLan() => wol.sendWakeOnLan(tvMac);
+  Future<void> sendWakeOnLan() => wol.sendWakeOnLan(tvMac, tvIp: tvIp);
 
   Presence get presence => _presence;
 

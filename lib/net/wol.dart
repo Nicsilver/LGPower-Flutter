@@ -1,17 +1,34 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-/// Sends the Wake-on-LAN magic packet once to the limited broadcast address.
-/// No SecureOn password; every failure is swallowed -- a wake attempt that
-/// can't even send is not worth surfacing as an error to the user.
-Future<void> sendWakeOnLan(String mac) async {
+/// Sends the Wake-on-LAN magic packet. The limited broadcast is what the
+/// Android app sends; on iOS that send needs Apple's multicast entitlement
+/// and fails with "No route to host" without it, so the packet also goes
+/// unicast to the TV's last known address on ports 9 and 7. An LG set in
+/// Quick Start standby keeps its network stack up and still answers ARP,
+/// which is what makes the unicast copy deliverable. No SecureOn password;
+/// every failure is swallowed -- a wake attempt that can't even send is not
+/// worth surfacing as an error to the user.
+Future<void> sendWakeOnLan(String mac, {String tvIp = ''}) async {
   final packet = buildMagicPacket(mac);
   if (packet == null) return;
   RawDatagramSocket? socket;
   try {
     socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-    socket.broadcastEnabled = true;
-    socket.send(packet, InternetAddress('255.255.255.255'), 9);
+    final unicast = InternetAddress.tryParse(tvIp);
+    for (var burst = 0; burst < 3; burst++) {
+      if (burst > 0) await Future<void>.delayed(const Duration(milliseconds: 300));
+      try {
+        socket.broadcastEnabled = true;
+        socket.send(packet, InternetAddress('255.255.255.255'), 9);
+      } catch (_) {
+        // Not entitled to broadcast (iOS); the unicast copies still go out.
+      }
+      if (unicast != null) {
+        socket.send(packet, unicast, 9);
+        socket.send(packet, unicast, 7);
+      }
+    }
   } catch (_) {
     // Swallowed -- see doc comment.
   } finally {
