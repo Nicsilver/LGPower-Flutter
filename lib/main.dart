@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -42,19 +43,40 @@ class LgPowerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return AppTheme(
       controller: controller,
-      child: MaterialApp(
-        title: 'LG Power',
-        debugShowCheckedModeBanner: false,
-        // An imperative setSystemUIOverlayStyle call gets overridden by the
-        // framework's own per-frame style; an AnnotatedRegion wins every frame.
-        builder: (context, child) => ListenableBuilder(
-          listenable: controller,
-          builder: (context, _) => AnnotatedRegion<SystemUiOverlayStyle>(
-            value: ThemeManager.overlayStyle(controller.theme),
-            child: child ?? const SizedBox.shrink(),
-          ),
-        ),
-        home: prefs.tvIp.isEmpty ? SetupScreen(client: client) : const MainScreen(),
+      // MaterialApp itself (not just its builder) has to live inside this so
+      // `theme:` below is rebuilt on a theme change too -- otherwise route
+      // transitions keep painting the OLD theme's colour behind the new page.
+      child: ListenableBuilder(
+        listenable: controller,
+        builder: (context, _) {
+          final active = controller.theme;
+          final brightness = ThemeData.estimateBrightnessForColor(active.windowBg);
+          return MaterialApp(
+            title: 'LG Power',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              brightness: brightness,
+              scaffoldBackgroundColor: active.windowBg,
+              canvasColor: active.windowBg,
+              colorScheme: ColorScheme.fromSeed(seedColor: active.btnAccentBg, brightness: brightness)
+                  .copyWith(surface: active.windowBg),
+              splashFactory: NoSplash.splashFactory,
+              pageTransitionsTheme: const PageTransitionsTheme(
+                builders: {
+                  TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+                  TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+                },
+              ),
+            ),
+            // An imperative setSystemUIOverlayStyle call gets overridden by the
+            // framework's own per-frame style; an AnnotatedRegion wins every frame.
+            builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+              value: ThemeManager.overlayStyle(active),
+              child: child ?? const SizedBox.shrink(),
+            ),
+            home: prefs.tvIp.isEmpty ? SetupScreen(client: client) : const MainScreen(),
+          );
+        },
       ),
     );
   }

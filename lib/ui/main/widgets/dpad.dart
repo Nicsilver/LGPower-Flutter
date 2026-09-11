@@ -77,6 +77,10 @@ class _DpadState extends State<Dpad> {
       child: Padding(
         padding: margin,
         child: Listener(
+          // deferToChild (the default) only hit-tests where the icon itself
+          // paints, so most of the 68dp square was untappable -- opaque
+          // claims the whole box regardless of the icon's smaller footprint.
+          behavior: HitTestBehavior.opaque,
           onPointerDown: (_) => _start(sector, keyCode),
           onPointerUp: (_) => _end(),
           onPointerCancel: (_) => _end(),

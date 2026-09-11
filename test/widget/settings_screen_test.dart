@@ -13,6 +13,7 @@ import 'package:lgpower/core/prefs.dart';
 import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/theme/theme_manager.dart';
 import 'package:lgpower/ui/settings/settings_screen.dart';
+import 'package:lgpower/ui/widgets/app_switch.dart';
 import 'package:lgpower/ui/widgets/buttons.dart';
 
 import 'fake_path_provider.dart';
@@ -43,7 +44,7 @@ void main() {
       await tester.pump();
 
       expect(prefs.volSlider, isTrue);
-      await tester.tap(find.byType(Switch).first);
+      await tester.tap(find.byType(AppSwitch).first);
       await tester.pump();
 
       expect(prefs.volSlider, isFalse);
@@ -59,11 +60,11 @@ void main() {
 
       expect(prefs.keepScreenOn, isFalse);
       await tester.ensureVisible(find.text('Keep screen on'));
-      await tester.tap(find.byType(Switch).last);
+      await tester.tap(find.byType(AppSwitch).last);
       await tester.pumpAndSettle();
 
       expect(find.text('Careful with OLED screens'), findsOneWidget);
-      expect((tester.widget(find.byType(Switch).last) as Switch).value, isTrue);
+      expect((tester.widget(find.byType(AppSwitch).last) as AppSwitch).value, isTrue);
 
       // Tapping the barrier (top of the screen, well above the sheet) is a
       // cancel -- the switch flips back and the pref is never written.
@@ -71,7 +72,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Careful with OLED screens'), findsNothing);
-      expect((tester.widget(find.byType(Switch).last) as Switch).value, isFalse);
+      expect((tester.widget(find.byType(AppSwitch).last) as AppSwitch).value, isFalse);
       expect(prefs.keepScreenOn, isFalse);
     });
 
@@ -82,14 +83,14 @@ void main() {
       await tester.pump();
 
       await tester.ensureVisible(find.text('Keep screen on'));
-      await tester.tap(find.byType(Switch).last);
+      await tester.tap(find.byType(AppSwitch).last);
       await tester.pumpAndSettle();
 
       await tester.tap(find.byType(AccentButton));
       await tester.pumpAndSettle();
 
       expect(find.text('Careful with OLED screens'), findsNothing);
-      expect((tester.widget(find.byType(Switch).last) as Switch).value, isTrue);
+      expect((tester.widget(find.byType(AppSwitch).last) as AppSwitch).value, isTrue);
       expect(prefs.keepScreenOn, isTrue);
     });
   });

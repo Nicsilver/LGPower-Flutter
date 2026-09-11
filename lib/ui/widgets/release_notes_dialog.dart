@@ -47,51 +47,57 @@ Future<void> showReleaseNotesDialog(
       return Center(
         child: SizedBox(
           width: size.width - 48,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
-            decoration: BoxDecoration(
-              color: theme.windowBg,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: theme.btnGhostBorder, width: 1),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: _letterSpacingPx(-0.015, 24),
-                    color: theme.primaryText,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: maxListHeight),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        for (var i = 0; i < releases.length; i++)
-                          _ReleaseSection(
-                            release: releases[i],
-                            isFirst: i == 0,
-                            showLatestChip: markLatest && i == 0,
-                            theme: theme,
-                          ),
-                      ],
+          // showGeneralDialog (unlike showDialog's DialogRoute) doesn't supply
+          // a Material ancestor itself, so text below falls back to the
+          // framework's "no Material found" debug style (double underline).
+          child: Material(
+            type: MaterialType.transparency,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
+              decoration: BoxDecoration(
+                color: theme.windowBg,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: theme.btnGhostBorder, width: 1),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: _letterSpacingPx(-0.015, 24),
+                      color: theme.primaryText,
                     ),
                   ),
-                ),
-                const SizedBox(height: 18),
-                AccentButton(
-                  label: buttonLabel,
-                  height: 46,
-                  radius: 12,
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                ),
-              ],
+                  const SizedBox(height: 18),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: maxListHeight),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          for (var i = 0; i < releases.length; i++)
+                            _ReleaseSection(
+                              release: releases[i],
+                              isFirst: i == 0,
+                              showLatestChip: markLatest && i == 0,
+                              theme: theme,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  AccentButton(
+                    label: buttonLabel,
+                    height: 46,
+                    radius: 12,
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

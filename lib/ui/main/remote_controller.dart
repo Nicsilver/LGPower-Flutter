@@ -345,6 +345,12 @@ class RemoteController extends ChangeNotifier {
   }
 
   void volumeDragMove(int level) {
+    // Paint every move (not just the 50ms network tick below) -- the pill's
+    // bar/label read straight off currentVolume, so without this the UI sat
+    // frozen until the drag ended even though the TV was already being sent
+    // intermediate levels.
+    currentVolume = level;
+    _notify();
     _volumeDragLevel = level;
     _volumeSendTimer ??= Timer.periodic(const Duration(milliseconds: 50), (_) {
       unawaited(_volumeSendTick());
@@ -412,6 +418,10 @@ class RemoteController extends ChangeNotifier {
   }
 
   void brightnessDragMove(int level) {
+    // See volumeDragMove: the pill reads currentBrightness directly, so the
+    // visual needs its own update independent of the 50ms network tick.
+    currentBrightness = level;
+    _notify();
     _brightnessDragLevel = level;
     _brightnessSendTimer ??= Timer.periodic(const Duration(milliseconds: 50), (_) {
       unawaited(_brightnessSendTick());

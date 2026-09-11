@@ -185,20 +185,30 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _buildSearching(ThemeConfig theme) {
-    return Column(
-      children: [
-        const SizedBox(
-          width: 44,
-          height: 44,
-          child: CircularProgressIndicator(strokeWidth: 3),
-        ),
-        const SizedBox(height: 18),
-        Text(
-          'Searching for TVs on your network…',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 15, color: theme.secondaryText),
-        ),
-      ],
+    // Scaffold.body is only loosely width-constrained (max, not tight), so
+    // without a child that claims the full width this Column shrink-wraps to
+    // its widest line (the label) and the whole group -- title/subtitle
+    // included -- ends up flush against the left padding instead of centred
+    // on the page. The list/pairing states dodge this because their
+    // full-width buttons force it; this branch has no such child.
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 44,
+            height: 44,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'Searching for TVs on your network…',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, color: theme.secondaryText),
+          ),
+        ],
+      ),
     );
   }
 

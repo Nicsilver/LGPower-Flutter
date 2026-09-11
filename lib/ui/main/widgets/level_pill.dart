@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../../theme/theme_manager.dart';
 import '../../widgets/app_icon.dart';
+import 'fill_viewport_page.dart';
 
 /// Volume/brightness/channel pill (spec §6): a `Listener`-driven touch state
 /// machine rather than a `GestureDetector`, because tap-vs-drag and the
@@ -97,6 +98,9 @@ class _LevelPillState extends State<LevelPill> {
   }
 
   void _onDown(PointerDownEvent event) {
+    // Claim the gesture before the page's own scrollable can start a
+    // competing vertical drag (Kotlin's requestDisallowInterceptTouchEvent).
+    FillViewportPage.scrollLockOf(context)?.value = true;
     final y = event.localPosition.dy;
     _startY = y;
     _dragging = false;
@@ -141,6 +145,7 @@ class _LevelPillState extends State<LevelPill> {
   }
 
   void _onUp(PointerUpEvent event) {
+    FillViewportPage.scrollLockOf(context)?.value = false;
     _cancelTimers();
     setState(() {
       _showTop = false;
@@ -162,6 +167,7 @@ class _LevelPillState extends State<LevelPill> {
   }
 
   void _onCancel(PointerCancelEvent event) {
+    FillViewportPage.scrollLockOf(context)?.value = false;
     _cancelTimers();
     setState(() {
       _showTop = false;
