@@ -405,13 +405,13 @@ void main() {
   });
 
   group('ReleaseNotes.since', () {
-    test('32 returns exactly 33, 34, 35, 36, 37 (newest first)', () {
+    test('32 returns exactly 33 through 41 (newest first)', () {
       final releases = ReleaseNotes.since(32);
-      expect(releases.map((r) => r.code).toList(), [37, 36, 35, 34, 33]);
+      expect(releases.map((r) => r.code).toList(), [41, 40, 39, 38, 37, 36, 35, 34, 33]);
     });
 
     test('all has no gaps below 1.22.0 and is sorted newest-first', () {
-      expect(ReleaseNotes.all.length, 38);
+      expect(ReleaseNotes.all.length, 42);
       for (var i = 1; i < ReleaseNotes.all.length; i++) {
         expect(ReleaseNotes.all[i].code, lessThanOrEqualTo(ReleaseNotes.all[i - 1].code));
       }

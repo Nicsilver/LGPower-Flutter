@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/tv_store.dart';
 import '../../net/pairing_watcher.dart';
 import '../../net/tv_discovery.dart';
 import '../../net/webos_client.dart';
@@ -15,24 +16,34 @@ enum _Screen { searching, list, pairing }
 
 enum _PairingPhase { connecting, promptShown, failed, success }
 
-/// First-launch setup flow (spec §1): search, pick, pair. Only ever reached
-/// with a blank `tv_ip` -- there is no menu entry back into it, matching the
-/// original app.
+/// Setup flow (spec §1): search, pick, pair, name. Reached with a blank
+/// `tv_ip` on first run, and again in [addMode] from the remote's TV picker
+/// or Settings › TVs › Add a TV to pair a second set.
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
     super.key,
     required this.client,
-    this.discover = discoverTvs,
+    this.discover = discoverTvsDetailed,
     this.pairingWatch,
+    this.addMode = false,
+    this.fingerprint = fingerprintTv,
   });
 
   final WebOsClient client;
 
   /// Injectable for tests; defaults to the real network scan.
-  final Future<List<String>> Function() discover;
+  final Future<List<FoundTv>> Function() discover;
 
   /// Injectable for tests; defaults to a fresh [PairingWatcher] per attempt.
   final PairingWatch? pairingWatch;
+
+  /// Adding another TV from the remote, as opposed to first-run setup: the
+  /// live prefs are parked (and restored on back-out), the name step feeds
+  /// a new saved TV, and the tour is not queued.
+  final bool addMode;
+
+  /// Unicast SSDP lookup for TVs typed in by hand; injectable for tests.
+  final Future<String?> Function(String ip) fingerprint;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -40,7 +51,7 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   _Screen _screen = _Screen.searching;
-  List<String> _tvList = const [];
+  List<FoundTv> _tvList = const [];
 
   String? _selectedIp;
   _PairingPhase _pairingPhase = _PairingPhase.connecting;
@@ -48,10 +59,24 @@ class _SetupScreenState extends State<SetupScreen> {
   Timer? _uiTimeout;
   StopPairing? _stopPairing;
   bool _promptShown = false;
+  bool _paired = false;
+  bool _finishing = false;
+
+  // Fingerprints from discovery, and the one for the TV being paired
+  // (fetched for manual entries)
+  final Map<String, String> _udns = {};
+  String? _pairedUdn;
+
+  late final TextEditingController _nameController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    final prefs = widget.client.prefs;
+    // Settles the saved-TV list before pairing writes the live prefs, so a
+    // fresh install is not mistaken for an upgrade with an unnamed TV
+    TvStore.list(prefs);
+    if (widget.addMode) TvStore.beginAdd(prefs);
     _startDiscovery();
   }
 
@@ -59,15 +84,20 @@ class _SetupScreenState extends State<SetupScreen> {
   void dispose() {
     _uiTimeout?.cancel();
     _stopPairing?.call();
+    if (widget.addMode && !_paired) TvStore.cancelAdd(widget.client.prefs);
+    _nameController.dispose();
     super.dispose();
   }
 
   Future<void> _startDiscovery() async {
     setState(() => _screen = _Screen.searching);
-    final ips = await widget.discover();
+    final found = await widget.discover();
     if (!mounted) return;
+    for (final f in found) {
+      if (f.udn != null) _udns[f.ip] = f.udn!;
+    }
     setState(() {
-      _tvList = ips;
+      _tvList = found;
       _screen = _Screen.list;
     });
   }
@@ -90,7 +120,8 @@ class _SetupScreenState extends State<SetupScreen> {
       if (mounted) setState(() => _pairingPhase = _PairingPhase.failed);
     });
 
-    final watch = widget.pairingWatch ?? PairingWatcher(widget.client.prefs).watch;
+    final watch =
+        widget.pairingWatch ?? PairingWatcher(widget.client.prefs).watch;
     _stopPairing = watch(
       ip,
       onPromptShown: () {
@@ -104,19 +135,58 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Future<void> _onPaired(String ip) async {
     _uiTimeout?.cancel();
+    _stopPairing = null;
+    _paired = true;
     await widget.client.saveTvIp(ip);
-    // Runs while the success screen is on screen -- does not block the
-    // 1200ms navigation below (spec §1.5).
-    unawaited(widget.client.getMacFromDevice().then((mac) {
-      if (mac != null && mac.isNotEmpty) widget.client.saveTvMac(mac);
-    }));
-    if (!mounted) return;
-    setState(() => _pairingPhase = _PairingPhase.success);
-    await Future.delayed(const Duration(milliseconds: 1200));
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainScreen()),
+    _pairedUdn = _udns[ip];
+    // Grab MAC (and the fingerprint, if discovery did not have it) while the
+    // name step shows -- neither blocks it (spec §1.5).
+    unawaited(
+      widget.client.getMacFromDevice().then((mac) {
+        if (mac != null && mac.isNotEmpty) widget.client.saveTvMac(mac);
+      }),
     );
+    if (_pairedUdn == null) {
+      unawaited(widget.fingerprint(ip).then((udn) => _pairedUdn ??= udn));
+    }
+    if (!mounted) return;
+    _nameController
+      ..text = TvStore.nextDefaultName(widget.client.prefs)
+      ..selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _nameController.text.length,
+      );
+    setState(() => _pairingPhase = _PairingPhase.success);
+  }
+
+  Future<void> _finishSetup() async {
+    if (_finishing) return;
+    setState(() => _finishing = true);
+    FocusManager.instance.primaryFocus?.unfocus();
+    final client = widget.client;
+    final prefs = client.prefs;
+    TvStore.addFromLive(prefs, _nameController.text, udn: _pairedUdn ?? '');
+    if (!widget.addMode) await prefs.setTourPending(true);
+    // The new TV's shortcuts come from its own app list, so the remote opens
+    // populated
+    final (apps, _) = await client.listApps();
+    final picked = WebOsClient.pickDefaultShortcuts(apps);
+    if (picked.isNotEmpty) {
+      await client.saveShortcuts(picked);
+      for (final app in picked) {
+        final url = app.iconUrl;
+        if (url != null) unawaited(client.cacheIcon(app.id, url));
+      }
+    }
+    if (!mounted) return;
+    if (widget.addMode) {
+      // Back to the remote, which re-reads the active TV on return
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } else {
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
+    }
   }
 
   void _retry() {
@@ -161,7 +231,7 @@ class _SetupScreenState extends State<SetupScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Connect to your TV',
+                widget.addMode ? 'Add another TV' : 'Connect to your TV',
                 style: TextStyle(fontSize: 15, color: theme.secondaryText),
               ),
               const SizedBox(height: 48),
@@ -224,17 +294,26 @@ class _SetupScreenState extends State<SetupScreen> {
           const SizedBox(height: 24),
           SizedBox(
             width: double.infinity,
-            child: GhostButton(label: 'Search again', height: 48, onPressed: _startDiscovery),
+            child: GhostButton(
+              label: 'Search again',
+              height: 48,
+              onPressed: _startDiscovery,
+            ),
           ),
           const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
-            child: GhostButton(label: 'Enter IP manually', height: 48, onPressed: _showManualIpDialog),
+            child: GhostButton(
+              label: 'Enter IP manually',
+              height: 48,
+              onPressed: _showManualIpDialog,
+            ),
           ),
         ],
       );
     }
 
+    final prefs = widget.client.prefs;
     final label = _tvList.length == 1 ? 'TV FOUND' : 'TVS FOUND';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -249,7 +328,19 @@ class _SetupScreenState extends State<SetupScreen> {
             children: [
               for (var i = 0; i < _tvList.length; i++) ...[
                 if (i > 0) const RowDivider(),
-                _TvRow(ip: _tvList[i], theme: theme, onTap: () => _selectTv(_tvList[i])),
+                _TvRow(
+                  ip: _tvList[i].ip,
+                  // A TV already in the list stays visible but greyed, so a
+                  // second TV that happens to share an address on another
+                  // network can still be told apart
+                  already: TvStore.match(
+                    prefs,
+                    _tvList[i].ip,
+                    _udns[_tvList[i].ip],
+                  ),
+                  theme: theme,
+                  onTap: () => _selectTv(_tvList[i].ip),
+                ),
               ],
             ],
           ),
@@ -259,7 +350,11 @@ class _SetupScreenState extends State<SetupScreen> {
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
-          child: GhostButton(label: 'Enter IP manually', height: 48, onPressed: _showManualIpDialog),
+          child: GhostButton(
+            label: 'Enter IP manually',
+            height: 48,
+            onPressed: _showManualIpDialog,
+          ),
         ),
       ],
     );
@@ -276,7 +371,8 @@ class _SetupScreenState extends State<SetupScreen> {
         message = 'Accept the pairing prompt\non your TV to continue';
         messageColor = theme.secondaryText;
       case _PairingPhase.failed:
-        message = "Can't reach the TV.\nMake sure it's on, restart it,\nthen try again.";
+        message =
+            "Can't reach the TV.\nMake sure it's on, restart it,\nthen try again.";
         messageColor = theme.secondaryText;
       case _PairingPhase.success:
         message = 'Connected!';
@@ -294,13 +390,21 @@ class _SetupScreenState extends State<SetupScreen> {
             children: [
               Text(
                 _selectedIp ?? '',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.primaryText),
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: theme.primaryText,
+                ),
               ),
               const SizedBox(height: 12),
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 15, height: 1.27, color: messageColor),
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.27,
+                  color: messageColor,
+                ),
               ),
               const SizedBox(height: 28),
               if (_pairingPhase == _PairingPhase.connecting ||
@@ -310,15 +414,24 @@ class _SetupScreenState extends State<SetupScreen> {
                   height: 36,
                   child: CircularProgressIndicator(strokeWidth: 3),
                 ),
+              if (_pairingPhase == _PairingPhase.success) _buildNameStep(theme),
               if (_pairingPhase == _PairingPhase.failed) ...[
                 SizedBox(
                   width: double.infinity,
-                  child: AccentButton(label: 'Try again', height: 44, onPressed: _retry),
+                  child: AccentButton(
+                    label: 'Try again',
+                    height: 44,
+                    onPressed: _retry,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
-                  child: GhostButton(label: 'Search again', height: 44, onPressed: _searchAgain),
+                  child: GhostButton(
+                    label: 'Search again',
+                    height: 44,
+                    onPressed: _searchAgain,
+                  ),
                 ),
               ],
             ],
@@ -327,35 +440,98 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
     );
   }
+
+  Widget _buildNameStep(ThemeConfig theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(bottom: 8),
+          child: SectionLabel('Name this TV'),
+        ),
+        SizedBox(
+          height: 44,
+          child: TextField(
+            controller: _nameController,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            textInputAction: TextInputAction.done,
+            maxLines: 1,
+            style: TextStyle(fontSize: 18, color: theme.primaryText),
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: theme.windowBg,
+              hintText: 'Living room',
+              hintStyle: TextStyle(color: theme.secondaryText.withAlpha(0x78)),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: theme.btnGhostBorder),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: theme.btnGhostBorderPressed),
+              ),
+            ),
+            onSubmitted: (_) => unawaited(_finishSetup()),
+          ),
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          child: AccentButton(
+            label: _finishing ? 'Setting up…' : 'Done',
+            height: 44,
+            onPressed: _finishing ? null : () => unawaited(_finishSetup()),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _TvRow extends StatelessWidget {
-  const _TvRow({required this.ip, required this.theme, required this.onTap});
+  const _TvRow({
+    required this.ip,
+    required this.already,
+    required this.theme,
+    required this.onTap,
+  });
 
   final String ip;
+  final Tv? already;
   final ThemeConfig theme;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final row = Container(
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      alignment: Alignment.centerLeft,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            already?.name ?? 'LG TV',
+            style: TextStyle(fontSize: 16, color: theme.primaryText),
+          ),
+          Text(
+            already == null ? ip : '$ip · already added',
+            style: TextStyle(fontSize: 13, color: theme.secondaryText),
+          ),
+        ],
+      ),
+    );
+    if (already != null) return Opacity(opacity: 0.45, child: row);
     return Material(
       color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          height: 60,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          alignment: Alignment.centerLeft,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('LG TV', style: TextStyle(fontSize: 16, color: theme.primaryText)),
-              Text(ip, style: TextStyle(fontSize: 13, color: theme.secondaryText)),
-            ],
-          ),
-        ),
-      ),
+      child: InkWell(onTap: onTap, child: row),
     );
   }
 }
@@ -394,7 +570,11 @@ class _ManualIpDialogState extends State<_ManualIpDialog> {
           children: [
             Text(
               'Enter IP manually',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: theme.primaryText),
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: theme.primaryText,
+              ),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -424,7 +604,8 @@ class _ManualIpDialogState extends State<_ManualIpDialog> {
                   child: AccentButton(
                     label: 'Connect',
                     height: 44,
-                    onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+                    onPressed: () =>
+                        Navigator.of(context).pop(_controller.text.trim()),
                   ),
                 ),
               ],

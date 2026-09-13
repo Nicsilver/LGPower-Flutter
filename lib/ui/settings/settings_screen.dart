@@ -1,40 +1,38 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/right_pill.dart';
+import '../../core/tv_store.dart';
+import '../../core/wake_action.dart';
 import '../../net/ir.dart';
-import '../../net/tv_discovery.dart';
 import '../../net/webos_client.dart';
 import '../../theme/release_notes.dart';
 import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
+import '../setup/setup_screen.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/app_switch.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/picker_sheet.dart';
 import '../widgets/release_notes_dialog.dart';
 import '../widgets/section.dart';
+import '../widgets/spotlight_tour.dart';
 import '../widgets/warning_sheet.dart';
 import 'service_remote_screen.dart';
 import 'theme_editor_screen.dart';
+import 'tv_detail_screen.dart';
 
-/// Spec §2: six sections, TV CONNECTION -> CONTROLS -> APP SHORTCUTS ->
-/// APPEARANCE -> ADVANCED -> ABOUT. Every colour comes from `AppTheme.of`,
-/// which rebuilds this screen live on a theme change (no `recreate()` flash,
-/// unlike the Kotlin source -- see spec §2.9).
+/// Spec §2: six sections, TVS -> CONTROLS -> APP SHORTCUTS -> APPEARANCE ->
+/// ADVANCED -> ABOUT. Every colour comes from `AppTheme.of`, which rebuilds
+/// this screen live on a theme change (no `recreate()` flash, unlike the
+/// Kotlin source -- see spec §2.9).
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({
-    super.key,
-    required this.client,
-    this.discover = discoverTvs,
-    this.listApps,
-  });
+  const SettingsScreen({super.key, required this.client, this.listApps});
 
   final WebOsClient client;
-
-  /// Injectable for tests; defaults to the real network scan.
-  final Future<List<String>> Function() discover;
 
   /// Injectable for tests; defaults to [WebOsClient.listApps] (real TV call).
   final Future<(List<TvApp>, String?)> Function()? listApps;
@@ -44,18 +42,13 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late final TextEditingController _ipController;
-  late final TextEditingController _macController;
-  late final FocusNode _ipFocus;
-  late final FocusNode _macFocus;
+  // Tour targets: the three group cards the Settings leg rings
+  final GlobalKey _tvsGroupKey = GlobalKey();
+  final GlobalKey _shortcutsGroupKey = GlobalKey();
+  final GlobalKey _appearanceGroupKey = GlobalKey();
 
-  bool _volSlider = true;
-  bool _brightnessSlider = true;
-  bool _rightPillChannel = false;
+  bool _channelPill = false;
   bool _keepScreenOn = false;
-
-  bool _detectingMac = false;
-  bool _discovering = false;
 
   List<TvApp> _apps = const [];
   List<TvApp> _selected = const [];
@@ -69,18 +62,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     final prefs = widget.client.prefs;
-    _ipController = TextEditingController(text: widget.client.tvIp);
-    _macController = TextEditingController(text: widget.client.tvMac);
-    _ipFocus = FocusNode()..addListener(_onIpFocusChange);
-    _macFocus = FocusNode()..addListener(_onMacFocusChange);
-    _volSlider = prefs.volSlider;
-    _brightnessSlider = prefs.brightnessSlider;
-    _rightPillChannel = prefs.rightPillChannel;
+    _channelPill = RightPill.get(prefs) == RightPill.channel;
     _keepScreenOn = prefs.keepScreenOn;
     _selected = widget.client.loadShortcuts();
     _apps = List.of(_selected);
     _loadVersion();
     _loadIrEmitter();
+    if (prefs.tourSettingsPending) {
+      prefs.setTourSettingsPending(false);
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => unawaited(_runTour()),
+      );
+    }
+  }
+
+  Future<void> _runTour() async {
+    // Let the enter transition settle so the highlight lands on laid-out cards
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (!mounted) return;
+    await showSpotlightTour(context, [
+      TourStep(
+        [_tvsGroupKey],
+        'Saved TVs',
+        'Every TV you have paired. Tap one to rename it or change its address, or add another.',
+      ),
+      TourStep(
+        [_shortcutsGroupKey],
+        'Pick your shortcuts',
+        'Load the app list from the TV, then tap apps to add them, up to eight. Tap a numbered one to '
+            'remove it, long-press and drag to reorder.',
+      ),
+      TourStep(
+        [_appearanceGroupKey],
+        'Themes',
+        'Pick a theme, or create your own with a few colours.',
+      ),
+    ]);
   }
 
   Future<void> _loadVersion() async {
@@ -93,80 +110,109 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _hasIrEmitter = hasEmitter);
   }
 
-  void _onIpFocusChange() {
-    if (!_ipFocus.hasFocus) _commitIp();
-  }
+  // ---------------------------------------------------------------------
+  // TVs
+  // ---------------------------------------------------------------------
 
-  void _onMacFocusChange() {
-    if (!_macFocus.hasFocus) _commitMac();
-  }
-
-  // IP: never cleared by an empty field (spec §2.1). MAC: always committed,
-  // including blank (spec §2.1) -- the one deliberate asymmetry in the app.
-  void _commitIp() {
-    final ip = _ipController.text;
-    if (ip.isNotEmpty) widget.client.saveTvIp(ip);
-  }
-
-  void _commitMac() {
-    widget.client.saveTvMac(_macController.text.trim());
-  }
-
-  @override
-  void dispose() {
-    _commitIp();
-    _commitMac();
-    _ipFocus.dispose();
-    _macFocus.dispose();
-    _ipController.dispose();
-    _macController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _autoDetectMac() async {
-    setState(() => _detectingMac = true);
-    final mac = await widget.client.getMacFromDevice();
-    if (!mounted) return;
-    setState(() => _detectingMac = false);
-    if (mac != null && mac.isNotEmpty) {
-      _macController.text = mac;
-      await widget.client.saveTvMac(mac);
-      if (!mounted) return;
-      showToast(context, 'Found $mac');
-    } else {
-      showToast(context, 'Not found — TV must be on to auto-detect', long: true);
-    }
-  }
-
-  Future<void> _discoverTv() async {
-    setState(() => _discovering = true);
-    final results = await widget.discover();
-    if (!mounted) return;
-    setState(() => _discovering = false);
-    if (results.isEmpty) {
-      showToast(context, 'No TV found');
-      return;
-    }
-    if (results.length == 1) {
-      _ipController.text = results.first;
-      showToast(context, 'Found ${results.first}');
-      return;
-    }
-    final selected = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const Text('Select TV'),
-        children: [
-          for (final ip in results)
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(dialogContext).pop(ip),
-              child: Text(ip),
-            ),
-        ],
+  Future<void> _openTvDetail(String id) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TvDetailScreen(prefs: widget.client.prefs, tvId: id),
       ),
     );
-    if (selected != null) _ipController.text = selected;
+    if (mounted) _reloadForActiveTv();
   }
+
+  Future<void> _addTv() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SetupScreen(client: widget.client, addMode: true),
+      ),
+    );
+    if (mounted) _reloadForActiveTv();
+  }
+
+  // Switching or removing a TV changes whose shortcuts and wake action the
+  // rest of the screen shows
+  void _reloadForActiveTv() {
+    setState(() {
+      _selected = widget.client.loadShortcuts();
+      final selectedIds = _selected.map((a) => a.id).toSet();
+      _apps = [
+        ..._selected,
+        ..._apps.where((a) => !selectedIds.contains(a.id)),
+      ];
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Controls
+  // ---------------------------------------------------------------------
+
+  // Inputs come from the TV when it answers, otherwise from the last list it
+  // gave us, so the picker still works with the TV off. Shortcuts are local.
+  Future<void> _openWakeActionPicker() async {
+    final client = widget.client;
+    final (live, _) = await client.getInputs();
+    final inputs = live.isEmpty ? client.cachedInputs() : live;
+    final apps = client.loadShortcuts();
+    if (!mounted) return;
+    if (inputs.isEmpty) {
+      showToast(context, 'Turn the TV on once to list its inputs here', long: true);
+    }
+    final current = WakeAction.get(client.prefs);
+    final options = [
+      const WakeAction(WakeAction.home),
+      const WakeAction(WakeAction.stay),
+      for (final i in inputs)
+        WakeAction(WakeAction.input, id: i.id, label: i.label),
+      for (final a in apps)
+        WakeAction(WakeAction.app, id: a.id, label: a.title),
+    ];
+    await showPickerSheet(
+      context,
+      title: 'After waking the TV',
+      rows: [for (final o in options) (o.key, o.display, o.key == current.key)],
+      onSelect: (key) {
+        final chosen = options.where((o) => o.key == key).firstOrNull;
+        if (chosen == null) return;
+        WakeAction.set(client.prefs, chosen);
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  // Turning off never needs confirmation. Turning on flips the switch
+  // immediately for a responsive toggle, then shows the OLED warning; the
+  // pref is only written on accept, and a cancel (tap outside/back) flips
+  // the switch back off without ever having persisted anything (plan 05).
+  void _onKeepScreenOnChanged(bool value) {
+    setState(() => _keepScreenOn = value);
+    if (!value) {
+      widget.client.prefs.setKeepScreenOn(false);
+      return;
+    }
+    unawaited(
+      showWarningSheet(
+        context,
+        chip: 'SCREEN STAYS ON',
+        title: 'Careful with OLED screens',
+        body:
+            "The remote will keep the screen awake for as long as it's open, even if you put "
+            "the phone down. On an OLED phone that can burn the remote layout into the panel over "
+            "time, and it drains the battery. Meant for a spare phone used as a dedicated remote.",
+        button: 'Keep screen on',
+        onAccept: () => widget.client.prefs.setKeepScreenOn(true),
+        onCancel: () {
+          if (mounted) setState(() => _keepScreenOn = false);
+        },
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Shortcuts
+  // ---------------------------------------------------------------------
 
   List<TvApp> get _gridOrder {
     final selectedIds = _selected.map((a) => a.id).toSet();
@@ -179,7 +225,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (_selected.isEmpty) {
       return 'No shortcuts configured — load apps from TV to pick some';
     }
-    return 'Tap to select · Long-press to reorder · ${_selected.length}/4 selected';
+    return 'Tap to add or remove · Long-press to reorder · ${_selected.length}/${WebOsClient.maxShortcuts} selected';
   }
 
   void _toggleApp(TvApp app) {
@@ -189,8 +235,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _selected = List.of(_selected)..removeAt(idx);
       });
     } else {
-      if (_selected.length >= 4) {
-        showToast(context, 'Max 4 shortcuts');
+      if (_selected.length >= WebOsClient.maxShortcuts) {
+        showToast(context, 'Max ${WebOsClient.maxShortcuts} shortcuts');
         return;
       }
       setState(() {
@@ -226,9 +272,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final url = app.iconUrl;
       if (url == null) continue;
       if (widget.client.cachedIconFile(app.id) != null) continue;
-      unawaited(widget.client.cacheIcon(app.id, url).then((_) {
-        if (mounted) setState(() {});
-      }));
+      unawaited(
+        widget.client.cacheIcon(app.id, url).then((_) {
+          if (mounted) setState(() {});
+        }),
+      );
     }
   }
 
@@ -252,6 +300,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _cacheMissingIconsFor(apps);
   }
 
+  // ---------------------------------------------------------------------
+  // Appearance / Advanced / About
+  // ---------------------------------------------------------------------
+
   Future<void> _openThemePicker() async {
     final controller = AppTheme.controllerOf(context);
     final activeId = controller.theme.id;
@@ -266,7 +318,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _openThemeLongPressSheet(String id, List<ThemeConfig> themes) async {
+  Future<void> _openThemeLongPressSheet(
+    String id,
+    List<ThemeConfig> themes,
+  ) async {
     final theme = themes.firstWhere((t) => t.id == id);
     final rows = <PickerRow>[
       ('duplicate', 'Duplicate', false),
@@ -290,7 +345,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       case 'edit':
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => ThemeEditorScreen(baseId: id, editId: id)),
+          MaterialPageRoute(
+            builder: (_) => ThemeEditorScreen(baseId: id, editId: id),
+          ),
         );
       case 'delete':
         _deleteThemeNoConfirm(id);
@@ -313,9 +370,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _openServiceRemote() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const ServiceRemoteScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const ServiceRemoteScreen()));
+  }
+
+  // The tour runs on the remote itself, so hand back to it
+  void _showTour() {
+    widget.client.prefs.setTourPending(true);
+    Navigator.of(context).pop();
   }
 
   void _openReleaseNotes() {
@@ -327,6 +390,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       markLatest: true,
     );
   }
+
+  // ---------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -343,15 +410,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Text(
                   'Settings',
-                  style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: theme.primaryText),
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.bold,
+                    color: theme.primaryText,
+                  ),
                 ),
               ),
               const SizedBox(height: 32),
-              _section('TV Connection', first: true, child: _connectionGroup(theme)),
+              _section(
+                'TVs',
+                first: true,
+                cardKey: _tvsGroupKey,
+                child: _tvsGroup(theme),
+              ),
               _section('Controls', child: _controlsGroup(theme)),
-              _section('App Shortcuts', child: _shortcutsGroup(theme)),
-              _section('Appearance', child: _appearanceGroup(theme)),
-              if (_hasIrEmitter) _section('Advanced', child: _advancedGroup(theme)),
+              _section(
+                'App Shortcuts',
+                cardKey: _shortcutsGroupKey,
+                child: _shortcutsGroup(theme),
+              ),
+              _section(
+                'Appearance',
+                cardKey: _appearanceGroupKey,
+                child: _appearanceGroup(theme),
+              ),
+              if (_hasIrEmitter)
+                _section('Advanced', child: _advancedGroup(theme)),
               _section('About', child: _aboutGroup(theme)),
             ],
           ),
@@ -360,158 +445,158 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _section(String label, {required Widget child, bool first = false}) {
+  Widget _section(
+    String label, {
+    required Widget child,
+    bool first = false,
+    Key? cardKey,
+  }) {
     return Padding(
       padding: EdgeInsets.only(top: first ? 0 : 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(padding: const EdgeInsets.only(bottom: 8), child: SectionLabel(label)),
-          SurfaceCard(radius: 14, child: child),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: SectionLabel(label),
+          ),
+          SurfaceCard(key: cardKey, radius: 14, child: child),
         ],
       ),
     );
   }
 
-  Widget _connectionGroup(ThemeConfig theme) {
+  Widget _tvsGroup(ThemeConfig theme) {
+    final prefs = widget.client.prefs;
+    final tvs = TvStore.list(prefs);
+    final activeId = TvStore.activeId(prefs);
+    final chevronColor = theme.statusBarLightIcons
+        ? const Color(0xFFAAAAAA)
+        : const Color(0xFF555555);
     return Column(
       children: [
-        _editRow(
-          theme: theme,
-          label: 'IP Address',
-          controller: _ipController,
-          focusNode: _ipFocus,
-          hint: '192.168.1.x',
-          keyboardType: TextInputType.url,
-        ),
-        const RowDivider(),
-        _editRow(
-          theme: theme,
-          label: 'MAC Address',
-          controller: _macController,
-          focusNode: _macFocus,
-          hint: 'AA:BB:CC:DD:EE:FF',
-          keyboardType: TextInputType.text,
-        ),
-        const RowDivider(),
-        Container(
-          height: 52,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: _SmallGhostButton(
-                  label: 'Auto-detect MAC',
-                  enabled: !_detectingMac,
-                  onPressed: _autoDetectMac,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _SmallAccentButton(
-                  label: 'Discover TV',
-                  spinning: _discovering,
-                  onPressed: _discoverTv,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _editRow({
-    required ThemeConfig theme,
-    required String label,
-    required TextEditingController controller,
-    required FocusNode focusNode,
-    required String hint,
-    required TextInputType keyboardType,
-  }) {
-    return Container(
-      height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          Text(label, style: TextStyle(fontSize: 15, color: theme.primaryText)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              focusNode: focusNode,
-              textAlign: TextAlign.end,
-              keyboardType: keyboardType,
-              style: TextStyle(fontSize: 15, color: theme.secondaryText),
-              decoration: InputDecoration(
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
-                hintText: hint,
-                hintStyle: TextStyle(color: theme.secondaryText.withAlpha(120)),
+        for (final tv in tvs) ...[
+          InkWell(
+            onTap: () => unawaited(_openTvDetail(tv.id)),
+            child: Container(
+              height: 56,
+              padding: const EdgeInsets.only(left: 16, right: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          tv.name,
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: theme.primaryText,
+                          ),
+                        ),
+                        Text(
+                          tv.ip.isEmpty ? 'No address' : tv.ip,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.secondaryText,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (tv.id == activeId)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(
+                        'In use',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.btnAccentBg,
+                        ),
+                      ),
+                    ),
+                  AppIcon('ic_chevron_right', size: 16, color: chevronColor),
+                ],
               ),
             ),
           ),
+          const RowDivider(),
         ],
-      ),
+        _navRow(
+          theme,
+          label: 'Add a TV',
+          onTap: _addTv,
+          correctedChevron: false,
+        ),
+        const RowDivider(),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Text(
+            'Tap a TV to rename it or change its address. On the remote, tap the TV name at the top to switch.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.4,
+              color: theme.secondaryText,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _controlsGroup(ThemeConfig theme) {
     return Column(
       children: [
-        _switchRow(theme, 'Volume slider', _volSlider, (v) {
-          setState(() => _volSlider = v);
-          widget.client.prefs.setVolSlider(v);
-        }),
+        _switchRow(
+          theme,
+          'Channel buttons instead of brightness',
+          _channelPill,
+          (v) {
+            setState(() => _channelPill = v);
+            RightPill.set(
+              widget.client.prefs,
+              v ? RightPill.channel : RightPill.brightness,
+            );
+          },
+        ),
         const RowDivider(),
-        _switchRow(theme, 'Brightness slider', _brightnessSlider, (v) {
-          setState(() => _brightnessSlider = v);
-          widget.client.prefs.setBrightnessSlider(v);
-        }),
+        _switchRow(
+          theme,
+          'Keep screen on',
+          _keepScreenOn,
+          _onKeepScreenOnChanged,
+        ),
         const RowDivider(),
-        _switchRow(theme, 'Channel buttons', _rightPillChannel, (v) {
-          setState(() => _rightPillChannel = v);
-          widget.client.prefs.setRightPillChannel(v);
-        }),
-        const RowDivider(),
-        _switchRow(theme, 'Keep screen on', _keepScreenOn, _onKeepScreenOnChanged),
+        _navRow(
+          theme,
+          label: 'After waking the TV',
+          value: WakeAction.get(widget.client.prefs).display,
+          onTap: () => unawaited(_openWakeActionPicker()),
+          correctedChevron: false,
+          chevron: false,
+        ),
       ],
     );
   }
 
-  // Turning off never needs confirmation. Turning on flips the switch
-  // immediately for a responsive toggle, then shows the OLED warning; the
-  // pref is only written on accept, and a cancel (tap outside/back) flips
-  // the switch back off without ever having persisted anything (plan 05).
-  void _onKeepScreenOnChanged(bool value) {
-    setState(() => _keepScreenOn = value);
-    if (!value) {
-      widget.client.prefs.setKeepScreenOn(false);
-      return;
-    }
-    unawaited(showWarningSheet(
-      context,
-      chip: 'SCREEN STAYS ON',
-      title: 'Careful with OLED screens',
-      body: "The remote will keep the screen awake for as long as it's open, even if you put "
-          "the phone down. On an OLED phone that can burn the remote layout into the panel over "
-          "time, and it drains the battery. Meant for a spare phone used as a dedicated remote.",
-      button: 'Keep screen on',
-      onAccept: () => widget.client.prefs.setKeepScreenOn(true),
-      onCancel: () {
-        if (mounted) setState(() => _keepScreenOn = false);
-      },
-    ));
-  }
-
-  Widget _switchRow(ThemeConfig theme, String label, bool value, ValueChanged<bool> onChanged) {
+  Widget _switchRow(
+    ThemeConfig theme,
+    String label,
+    bool value,
+    ValueChanged<bool> onChanged,
+  ) {
     return Container(
       height: 52,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
-          Expanded(child: Text(label, style: TextStyle(fontSize: 15, color: theme.primaryText))),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 15, color: theme.primaryText),
+            ),
+          ),
           AppSwitch(value: value, onChanged: onChanged),
         ],
       ),
@@ -524,7 +609,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-          child: Text(_shortcutsSummary, style: TextStyle(fontSize: 13, color: theme.sectionLabel)),
+          child: Text(
+            _shortcutsSummary,
+            style: TextStyle(fontSize: 13, color: theme.sectionLabel),
+          ),
         ),
         if (order.isNotEmpty)
           Padding(
@@ -545,7 +633,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildGridItem(ThemeConfig theme, int displayIndex, TvApp app, bool selected) {
+  Widget _buildGridItem(
+    ThemeConfig theme,
+    int displayIndex,
+    TvApp app,
+    bool selected,
+  ) {
     final content = _AppGridTile(
       app: app,
       theme: theme,
@@ -553,16 +646,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
       order: selected ? displayIndex + 1 : null,
       client: widget.client,
     );
-    final tappable = GestureDetector(onTap: () => _toggleApp(app), child: content);
+    final tappable = GestureDetector(
+      onTap: () => _toggleApp(app),
+      child: content,
+    );
     if (!selected) return tappable;
 
     return LongPressDraggable<int>(
       data: displayIndex,
-      feedback: Opacity(opacity: 0.85, child: SizedBox(width: 72, child: content)),
+      onDragStarted: HapticFeedback.heavyImpact,
+      feedback: Transform.scale(
+        scale: 1.12,
+        child: Opacity(
+          opacity: 0.85,
+          child: SizedBox(width: 72, child: content),
+        ),
+      ),
       childWhenDragging: Opacity(opacity: 0.3, child: content),
       child: DragTarget<int>(
         onWillAcceptWithDetails: (details) => details.data < _selected.length,
-        onAcceptWithDetails: (details) => _reorderSelected(details.data, displayIndex),
+        onAcceptWithDetails: (details) =>
+            _reorderSelected(details.data, displayIndex),
         builder: (context, candidate, rejected) => tappable,
       ),
     );
@@ -571,24 +675,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _appearanceGroup(ThemeConfig theme) {
     return Column(
       children: [
-        _navRow(theme, label: 'Theme', value: theme.name, onTap: _openThemePicker, correctedChevron: false),
+        _navRow(
+          theme,
+          label: 'Theme',
+          value: theme.name,
+          onTap: _openThemePicker,
+          correctedChevron: false,
+        ),
         const RowDivider(),
-        _navRow(theme, label: 'Create Custom Theme', onTap: _openCreateTheme, correctedChevron: false),
+        _navRow(
+          theme,
+          label: 'Create Custom Theme',
+          onTap: _openCreateTheme,
+          correctedChevron: false,
+        ),
       ],
     );
   }
 
   Widget _advancedGroup(ThemeConfig theme) {
-    return _navRow(theme, label: 'Service Remote (IR)', onTap: _openServiceRemote, correctedChevron: false);
+    return _navRow(
+      theme,
+      label: 'Service Remote (IR)',
+      onTap: _openServiceRemote,
+      correctedChevron: false,
+    );
   }
 
   Widget _aboutGroup(ThemeConfig theme) {
-    return _navRow(
-      theme,
-      label: 'Release notes',
-      value: _version,
-      onTap: _openReleaseNotes,
-      correctedChevron: false,
+    return Column(
+      children: [
+        _navRow(
+          theme,
+          label: 'Show the tour',
+          onTap: _showTour,
+          correctedChevron: false,
+        ),
+        const RowDivider(),
+        _navRow(
+          theme,
+          label: 'Release notes',
+          value: _version,
+          onTap: _openReleaseNotes,
+          correctedChevron: false,
+        ),
+      ],
     );
   }
 
@@ -601,6 +732,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String? value,
     required VoidCallback onTap,
     required bool correctedChevron,
+    bool chevron = true,
   }) {
     final chevronColor = correctedChevron && theme.statusBarLightIcons
         ? const Color(0xFFAAAAAA)
@@ -612,83 +744,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         padding: const EdgeInsets.only(left: 16, right: 12),
         child: Row(
           children: [
-            Expanded(child: Text(label, style: TextStyle(fontSize: 15, color: theme.primaryText))),
-            if (value != null && value.isNotEmpty) ...[
-              Text(value, style: TextStyle(fontSize: 15, color: theme.secondaryText)),
-              const SizedBox(width: 4),
-            ],
-            AppIcon('ic_chevron_right', size: 16, color: chevronColor),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SmallGhostButton extends StatelessWidget {
-  const _SmallGhostButton({required this.label, required this.enabled, required this.onPressed});
-
-  final String label;
-  final bool enabled;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = AppTheme.of(context);
-    return SizedBox(
-      height: 36,
-      child: OutlinedButton(
-        onPressed: enabled ? onPressed : null,
-        style: OutlinedButton.styleFrom(
-          side: BorderSide(color: theme.btnGhostBorder),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: theme.secondaryText),
-        ),
-      ),
-    );
-  }
-}
-
-class _SmallAccentButton extends StatelessWidget {
-  const _SmallAccentButton({required this.label, required this.spinning, required this.onPressed});
-
-  final String label;
-  final bool spinning;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = AppTheme.of(context);
-    return SizedBox(
-      height: 36,
-      child: ElevatedButton(
-        onPressed: spinning ? null : onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: theme.btnAccentBg,
-          disabledBackgroundColor: theme.btnAccentBg,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              label,
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: theme.btnAccentText),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(fontSize: 15, color: theme.primaryText),
+              ),
             ),
-            if (spinning) ...[
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: const AlwaysStoppedAnimation(Color(0xFF888888)),
+            if (value != null && value.isNotEmpty) ...[
+              Flexible(
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 15, color: theme.secondaryText),
                 ),
               ),
+              if (chevron) const SizedBox(width: 4),
             ],
+            if (chevron)
+              AppIcon('ic_chevron_right', size: 16, color: chevronColor),
           ],
         ),
       ),
@@ -705,7 +779,9 @@ class _LoadAppsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = AppTheme.of(context);
-    final chevronColor = theme.statusBarLightIcons ? const Color(0xFFAAAAAA) : const Color(0xFF555555);
+    final chevronColor = theme.statusBarLightIcons
+        ? const Color(0xFFAAAAAA)
+        : const Color(0xFF555555);
     return InkWell(
       onTap: loading ? null : onTap,
       child: Container(
@@ -713,7 +789,12 @@ class _LoadAppsRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
           children: [
-            Expanded(child: Text('Load Apps from TV', style: TextStyle(fontSize: 15, color: theme.primaryText))),
+            Expanded(
+              child: Text(
+                'Load Apps from TV',
+                style: TextStyle(fontSize: 15, color: theme.primaryText),
+              ),
+            ),
             if (loading)
               const SizedBox(
                 width: 20,
@@ -763,9 +844,16 @@ class _AppGridTile extends StatelessWidget {
               children: [
                 ClipOval(
                   child: file != null
-                      ? Image.file(file, width: 60, height: 60, fit: BoxFit.cover)
+                      ? Image.file(
+                          file,
+                          width: 60,
+                          height: 60,
+                          fit: BoxFit.cover,
+                        )
                       : _LetterPlaceholder(
-                          letter: app.title.isNotEmpty ? app.title[0].toUpperCase() : '?',
+                          letter: app.title.isNotEmpty
+                              ? app.title[0].toUpperCase()
+                              : '?',
                           theme: theme,
                         ),
                 ),
@@ -777,10 +865,17 @@ class _AppGridTile extends StatelessWidget {
                       width: 20,
                       height: 20,
                       alignment: Alignment.center,
-                      decoration: const BoxDecoration(color: Color(0xFF444444), shape: BoxShape.circle),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF444444),
+                        shape: BoxShape.circle,
+                      ),
                       child: Text(
                         '$order',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
@@ -817,7 +912,11 @@ class _LetterPlaceholder extends StatelessWidget {
       alignment: Alignment.center,
       child: Text(
         letter,
-        style: TextStyle(fontSize: 60 * 0.42, fontWeight: FontWeight.bold, color: theme.secondaryText),
+        style: TextStyle(
+          fontSize: 60 * 0.42,
+          fontWeight: FontWeight.bold,
+          color: theme.secondaryText,
+        ),
       ),
     );
   }

@@ -9,6 +9,8 @@ import 'package:palette_generator/palette_generator.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/prefs.dart';
+import '../core/tv_store.dart';
+import '../core/wake_action.dart';
 import 'command_session.dart';
 import 'pointer_session.dart';
 import 'wol.dart' as wol;
@@ -230,13 +232,32 @@ class WebOsClient {
   Future<Result> turnOnScreen() =>
       _execute('ssap://com.webos.service.tvpower/power/turnOnScreen');
 
-  // Doubles as the "is webOS awake yet?" probe in the wake retry loop
-  // (short 3 s timeout so a dead TV fails fast).
+  // Short 3 s timeout so a dead TV fails fast in the wake retry loop.
   Future<Result> goHome() => _execute(
         'ssap://system.launcher/launch',
         payload: {'id': 'com.webos.app.home'},
         timeoutSecs: 3,
       );
+
+  // Answers as soon as webOS is up without changing what is on screen, so a
+  // TV that was woken over the network stays on whatever it boots into.
+  Future<Result> probe() => _execute('ssap://system/getSystemInfo', timeoutSecs: 3);
+
+  /// The "is webOS awake yet?" probe of the wake retry loop, doubling as the
+  /// user's chosen landing spot (Settings › Controls › After waking the TV).
+  Future<Result> afterWake() {
+    final a = WakeAction.get(prefs);
+    return switch (a.kind) {
+      WakeAction.stay => probe(),
+      WakeAction.input => _execute('ssap://tv/switchInput', payload: {'inputId': a.id}, timeoutSecs: 3),
+      WakeAction.app => _execute('ssap://system.launcher/launch', payload: {'id': a.id}, timeoutSecs: 3),
+      _ => goHome(),
+    };
+  }
+
+  Future<Result> pressEnter() => pressKey('ENTER');
+  Future<Result> volumeUp() => pressKey('VOLUMEUP');
+  Future<Result> volumeDown() => pressKey('VOLUMEDOWN');
 
   Future<VolumeState?> getVolume() async {
     if (tvIp.isEmpty) return null;
@@ -261,6 +282,20 @@ class WebOsClient {
 
   Future<Result> setVolume(int level) =>
       _execute('ssap://audio/setVolume', payload: {'volume': level});
+
+  // Some sets ignore setVolume (external speakers over ARC/optical, or a
+  // burst of requests during a drag) while the volume keys still work, so
+  // read the level back and step the rest of the way.
+  Future<void> settleVolume(int target) async {
+    final actual = (await getVolume())?.volume;
+    if (actual == null) return;
+    final delta = target - actual;
+    if (delta == 0 || delta.abs() > 40) return;
+    for (var i = 0; i < delta.abs(); i++) {
+      await (delta > 0 ? volumeUp() : volumeDown());
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+    }
+  }
 
   Future<int?> getBrightness() async {
     if (tvIp.isEmpty) return null;
@@ -354,11 +389,39 @@ class WebOsClient {
     if (tvIp.isEmpty) return (const <InputSource>[], 'No TV IP configured');
     final reply = await _commandSession()
         .send('ssap://tv/getExternalInputList', timeoutSecs: 8);
-    return switch (reply) {
+    final result = switch (reply) {
       CmdReplyNeedsPairing() => (const <InputSource>[], 'Pairing required'),
       CmdReplyErr(:final message) => (const <InputSource>[], message),
       CmdReplyOk(:final payload) => _parseInputs(payload),
     };
+    if (result.$1.isNotEmpty) {
+      unawaited(prefs.setString(
+        _inputsCacheKey(),
+        jsonEncode([for (final i in result.$1) {'id': i.id, 'label': i.label}]),
+      ));
+    }
+    return result;
+  }
+
+  String _inputsCacheKey() {
+    final id = TvStore.activeId(prefs);
+    return id == null ? 'inputs_cache' : 'inputs_cache_$id';
+  }
+
+  /// Last list the TV gave us, so the wake picker still offers inputs while
+  /// the TV is off.
+  List<InputSource> cachedInputs() {
+    final json = prefs.getString(_inputsCacheKey());
+    if (json == null) return const [];
+    try {
+      final arr = jsonDecode(json) as List<dynamic>;
+      return [
+        for (final e in arr)
+          InputSource((e as Map<String, dynamic>)['id'] as String, e['label'] as String),
+      ];
+    } catch (_) {
+      return const [];
+    }
   }
 
   (List<InputSource>, String?) _parseInputs(Map<String, dynamic> payload) {
@@ -600,7 +663,7 @@ class WebOsClient {
       brandColors[appId] ?? prefs.colorFor(appId);
 
   List<TvApp> loadShortcuts() {
-    final raw = prefs.appShortcutsJson;
+    final raw = prefs.getString(TvStore.shortcutsKey(prefs));
     if (raw == null) return _defaultShortcuts();
     try {
       final arr = jsonDecode(raw) as List<dynamic>;
@@ -623,10 +686,12 @@ class WebOsClient {
         TvApp('netflix', 'Netflix'),
       ];
 
-  // Mirrors the UI-level cap (AppGridAdapter) so a bad caller can't persist
-  // more shortcuts than the app will ever render.
+  static const int maxShortcuts = 8;
+
+  // Mirrors the UI-level cap so a bad caller can't persist more shortcuts
+  // than the app will ever render.
   Future<void> saveShortcuts(List<TvApp> apps) {
-    final limited = apps.take(4).toList();
+    final limited = apps.take(maxShortcuts).toList();
     final json = jsonEncode(limited
         .map((a) => {
               'id': a.id,
@@ -634,7 +699,39 @@ class WebOsClient {
               if (a.iconUrl != null) 'iconUrl': a.iconUrl,
             })
         .toList());
-    return prefs.setAppShortcutsJson(json);
+    return prefs.setString(TvStore.shortcutsKey(prefs), json);
+  }
+
+  /// First shortcuts for a freshly paired TV: the well-known streaming apps
+  /// it actually has, in a fixed order of popularity, topped up from the
+  /// TV's own launcher list. webOS exposes neither usage counts nor the
+  /// on-screen ribbon order, so this is the closest thing to "the apps you
+  /// use".
+  static List<TvApp> pickDefaultShortcuts(List<TvApp> apps, {int count = 4}) {
+    const wanted = [
+      'youtube', 'netflix', 'amazon', 'prime', 'disney', 'hbo', 'max', 'viaplay',
+      'spotify', 'apple', 'plex', 'twitch', 'tv 2', 'dr tv', 'skyshowtime', 'paramount',
+    ];
+    final picked = <TvApp>[];
+    for (final w in wanted) {
+      if (picked.length >= count) break;
+      for (final a in apps) {
+        if (picked.contains(a)) continue;
+        final id = a.id.toLowerCase();
+        final title = a.title.toLowerCase();
+        if (id.contains(w) || title == w || title.startsWith('$w ')) {
+          picked.add(a);
+          break;
+        }
+      }
+    }
+    const system = ['com.webos.', 'com.palm.', 'com.lge.', 'com.lgsmartplatform'];
+    final rest = apps
+        .where((a) => !picked.contains(a) && !system.any((p) => a.id.startsWith(p)))
+        .toList();
+    final fill = count - picked.length;
+    if (fill > 0) picked.addAll(rest.skip((rest.length - fill).clamp(0, rest.length)));
+    return picked.take(count).toList();
   }
 
   Future<Result> _lunaRequest(String uri, Map<String, dynamic> params) async {

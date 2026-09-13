@@ -21,7 +21,11 @@ class CircleButton extends StatelessWidget {
     this.onTap,
     this.onLongPress,
     this.pressedScale = 0.82,
+    this.circleKey,
   });
+
+  /// Marks the circle alone (not the label) so the tour can ring it.
+  final Key? circleKey;
 
   final double size;
   final Color color;
@@ -43,6 +47,7 @@ class CircleButton extends StatelessWidget {
       pressedScale: pressedScale,
       semanticLabel: semanticLabel,
       child: Container(
+        key: circleKey,
         width: size,
         height: size,
         alignment: Alignment.center,

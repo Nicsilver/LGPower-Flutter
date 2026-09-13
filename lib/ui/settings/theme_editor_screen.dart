@@ -38,7 +38,33 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
   late Color _seedSecondary;
   late Color _seedAccent;
 
+  // Interactive preview state: the switch and the pill level
+  bool _previewSwitch = true;
+  int _previewLevel = 24;
+
   bool get _editing => widget.editId != null;
+
+  // Appearance is a starting point: it swaps the neutral seeds for the
+  // built-in Dark or Light palette and keeps the accent, so the choice is
+  // visible straight away
+  Future<void> _setAppearance(bool light) async {
+    ThemeConfig? base;
+    try {
+      base = await ThemeManager.loadTheme(light ? 'light' : 'dark');
+    } catch (_) {
+      base = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _light = light;
+      if (base != null) {
+        _seedBg = base.seedBg;
+        _seedSurface = base.seedSurface;
+        _seedText = base.seedText;
+        _seedSecondary = base.seedSecondary;
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -240,10 +266,14 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
       child: Row(
         children: [
           Expanded(
-            child: _segmentHalf('Dark', selected: !_light, active: active, onTap: () => setState(() => _light = false)),
+            child: _segmentHalf('Dark', selected: !_light, active: active, onTap: () {
+              if (_light) _setAppearance(false);
+            }),
           ),
           Expanded(
-            child: _segmentHalf('Light', selected: _light, active: active, onTap: () => setState(() => _light = true)),
+            child: _segmentHalf('Light', selected: _light, active: active, onTap: () {
+              if (!_light) _setAppearance(true);
+            }),
           ),
         ],
       ),
@@ -344,33 +374,33 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
                       const Spacer(),
                       SizedBox(
                         height: 44,
-                        child: ElevatedButton(
-                          onPressed: null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: preview.btnAccentBg,
-                            disabledBackgroundColor: preview.btnAccentBg,
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: Text(
-                            'Connect',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: preview.btnAccentText),
+                        child: Material(
+                          color: preview.btnAccentBg,
+                          borderRadius: BorderRadius.circular(12),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            splashColor: preview.btnAccentText.withAlpha(0x33),
+                            highlightColor: preview.btnAccentText.withAlpha(0x33),
+                            onTap: () => setState(() => _previewSwitch = !_previewSwitch),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 20),
+                              child: Center(
+                                child: Text(
+                                  'Connect',
+                                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: preview.btnAccentText),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 14),
-                  Container(
-                    height: 48,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    decoration: BoxDecoration(color: preview.pillBg, borderRadius: BorderRadius.circular(24)),
-                    child: Row(
-                      children: [
-                        Expanded(child: Text('Volume', style: TextStyle(color: preview.pillLabelText, fontSize: 15))),
-                        Text('24', style: TextStyle(color: preview.pillLabelText, fontSize: 15)),
-                      ],
-                    ),
+                  _PreviewPill(
+                    theme: preview,
+                    level: _previewLevel,
+                    onLevel: (v) => setState(() => _previewLevel = v),
                   ),
                   const SizedBox(height: 14),
                   Row(
@@ -381,10 +411,12 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
                       Transform.scale(
                         scale: 1.2,
                         child: Switch(
-                          value: true,
-                          onChanged: null,
+                          value: _previewSwitch,
+                          onChanged: (v) => setState(() => _previewSwitch = v),
                           activeThumbColor: preview.switchThumbOn,
                           activeTrackColor: preview.switchTrackOn,
+                          inactiveThumbColor: preview.switchThumbOff,
+                          inactiveTrackColor: preview.switchTrackOff,
                           trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
                         ),
                       ),
@@ -396,6 +428,57 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The preview pill behaves like the volume pill on the remote: drag to set
+/// a level. A raw Listener so the editor's scroll view never steals the drag.
+class _PreviewPill extends StatelessWidget {
+  const _PreviewPill({required this.theme, required this.level, required this.onLevel});
+
+  final ThemeConfig theme;
+  final int level;
+  final ValueChanged<int> onLevel;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        void set(Offset local) => onLevel((local.dx / width * 100).toInt().clamp(0, 100));
+        return Listener(
+          onPointerDown: (e) => set(e.localPosition),
+          onPointerMove: (e) => set(e.localPosition),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: SizedBox(
+              height: 48,
+              child: Stack(
+                children: [
+                  Positioned.fill(child: ColoredBox(color: theme.pillBg)),
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: width * level / 100,
+                    child: ColoredBox(color: theme.pillLabelText.withAlpha(0x33)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text('Volume', style: TextStyle(color: theme.pillLabelText, fontSize: 15))),
+                        Text('$level', style: TextStyle(color: theme.pillLabelText, fontSize: 15)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

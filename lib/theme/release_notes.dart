@@ -20,6 +20,27 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(41, '1.36.1', '2026-09-13', [
+      "The after-wake picker lists the TV's inputs even while the TV is off, from the last connection",
+    ]),
+    Release(40, '1.36.0', '2026-09-13', [
+      'Choose what the TV shows after waking it: Home, leave as is, an input or one of your shortcuts (Settings › Controls)',
+      'Volume slider: the level you let go at is checked against the TV and corrected if a set ignored it',
+    ]),
+    Release(39, '1.35.0', '2026-09-12', [
+      'Several TVs: tap the name at the top to switch or add; Settings › TVs to rename or remove',
+      'Media keys: rewind, play, pause and forward behind a new Media button under the d-pad',
+      'Up to 8 app shortcuts in two rows',
+      'OK and Live TV keys on the numpad page',
+      'Channel buttons can replace the brightness slider (Settings › Controls)',
+      'Guided tour of the remote after setup, replayable from Settings › About',
+      'Theme editor: Light/Dark swaps the base palette, the preview is interactive',
+      "Finds a TV connected to the phone's own hotspot",
+      "Wake-on-LAN also sent directly to the TV's address, for TVs on another VLAN",
+    ]),
+    Release(38, '1.34.0', '2026-09-11', [
+      'Settings gear and status dot no longer hide under the status bar on Android 15',
+    ]),
     Release(37, '1.33.0', '2026-09-11', [
       'Keep screen on toggle in Settings, for a phone used as a dedicated remote',
     ]),

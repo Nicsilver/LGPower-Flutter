@@ -38,7 +38,11 @@ class LevelPill extends StatefulWidget {
     this.onTapDown,
     this.onDragMove,
     this.onDragEnd,
+    this.pillKey,
   });
+
+  /// Marks the pill itself (not the level label above) so the tour can ring it.
+  final Key? pillKey;
 
   final double width;
   final double height;
@@ -203,6 +207,7 @@ class _LevelPillState extends State<LevelPill> {
           onPointerUp: _onUp,
           onPointerCancel: _onCancel,
           child: ClipRRect(
+            key: widget.pillKey,
             borderRadius: BorderRadius.circular(28),
             child: SizedBox(
               width: widget.width,

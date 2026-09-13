@@ -1,8 +1,8 @@
 // Covers spec §2's prefs-facing behaviour: switches write immediately, the
-// IP/MAC commit-on-leave asymmetry, and the shortcuts grid's 4-item cap.
-// Network-backed rows (Discover TV, Auto-detect MAC, Load Apps from TV) are
-// exercised through injectable fakes here and against the real fake TV in
-// manual verification (plan 03) -- WebOsClient itself is not mocked.
+// saved-TV rows, the TV detail screen's save-on-leave, and the shortcuts
+// grid's 8-item cap. Network-backed rows (Load Apps from TV, the wake-action
+// picker) are exercised through injectable fakes here and against the real
+// fake TV in manual verification -- WebOsClient itself is not mocked.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -10,9 +10,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:lgpower/core/prefs.dart';
+import 'package:lgpower/core/right_pill.dart';
+import 'package:lgpower/core/tv_store.dart';
 import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/theme/theme_manager.dart';
 import 'package:lgpower/ui/settings/settings_screen.dart';
+import 'package:lgpower/ui/settings/tv_detail_screen.dart';
 import 'package:lgpower/ui/widgets/app_switch.dart';
 import 'package:lgpower/ui/widgets/buttons.dart';
 
@@ -24,12 +27,16 @@ Future<(Prefs, WebOsClient, AppThemeController)> _harness() async {
   return (prefs, WebOsClient(prefs), controller);
 }
 
-Widget _app(WebOsClient client, AppThemeController controller, {
+Widget _app(
+  WebOsClient client,
+  AppThemeController controller, {
   Future<(List<TvApp>, String?)> Function()? listApps,
 }) {
   return AppTheme(
     controller: controller,
-    child: MaterialApp(home: SettingsScreen(client: client, listApps: listApps)),
+    child: MaterialApp(
+      home: SettingsScreen(client: client, listApps: listApps),
+    ),
   );
 }
 
@@ -37,22 +44,35 @@ void main() {
   installFakePathProvider();
 
   group('CONTROLS switches', () {
-    testWidgets('toggling a switch writes the pref immediately', (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final (prefs, client, controller) = await _harness();
-      await tester.pumpWidget(_app(client, controller));
-      await tester.pump();
+    testWidgets(
+      'the channel-buttons switch writes the right_pill pref immediately',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final (prefs, client, controller) = await _harness();
+        await tester.pumpWidget(_app(client, controller));
+        await tester.pump();
 
-      expect(prefs.volSlider, isTrue);
-      await tester.tap(find.byType(AppSwitch).first);
-      await tester.pump();
+        expect(RightPill.get(prefs), RightPill.brightness);
+        await tester.tap(find.byType(AppSwitch).first);
+        await tester.pump();
 
-      expect(prefs.volSlider, isFalse);
+        expect(RightPill.get(prefs), RightPill.channel);
+      },
+    );
+
+    testWidgets('a pre-1.35 channel switch pref still reads as channel', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({'right_pill_channel': true});
+      final prefs = await Prefs.load();
+      expect(RightPill.get(prefs), RightPill.channel);
     });
   });
 
   group('Keep screen on', () {
-    testWidgets('cancelling the warning sheet flips the switch back off', (tester) async {
+    testWidgets('cancelling the warning sheet flips the switch back off', (
+      tester,
+    ) async {
       SharedPreferences.setMockInitialValues({});
       final (prefs, client, controller) = await _harness();
       await tester.pumpWidget(_app(client, controller));
@@ -64,7 +84,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Careful with OLED screens'), findsOneWidget);
-      expect((tester.widget(find.byType(AppSwitch).last) as AppSwitch).value, isTrue);
+      expect(
+        (tester.widget(find.byType(AppSwitch).last) as AppSwitch).value,
+        isTrue,
+      );
 
       // Tapping the barrier (top of the screen, well above the sheet) is a
       // cancel -- the switch flips back and the pref is never written.
@@ -72,7 +95,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Careful with OLED screens'), findsNothing);
-      expect((tester.widget(find.byType(AppSwitch).last) as AppSwitch).value, isFalse);
+      expect(
+        (tester.widget(find.byType(AppSwitch).last) as AppSwitch).value,
+        isFalse,
+      );
       expect(prefs.keepScreenOn, isFalse);
     });
 
@@ -90,74 +116,125 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Careful with OLED screens'), findsNothing);
-      expect((tester.widget(find.byType(AppSwitch).last) as AppSwitch).value, isTrue);
+      expect(
+        (tester.widget(find.byType(AppSwitch).last) as AppSwitch).value,
+        isTrue,
+      );
       expect(prefs.keepScreenOn, isTrue);
     });
   });
 
-  group('IP/MAC commit-on-leave asymmetry', () {
-    testWidgets('clearing the IP field does not clear the saved IP', (tester) async {
-      SharedPreferences.setMockInitialValues({'tv_ip': '192.168.1.50'});
+  group('Saved TVs', () {
+    testWidgets('a flat-pref install shows one migrated TV marked In use', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({
+        'tv_ip': '192.168.1.50',
+        'tv_mac': 'AA:BB:CC:DD:EE:FF',
+      });
       final (prefs, client, controller) = await _harness();
       await tester.pumpWidget(_app(client, controller));
       await tester.pump();
 
-      await tester.enterText(find.text('192.168.1.50'), '');
-      // Losing focus (not just editing) is what commits (spec §2.1).
-      FocusManager.instance.primaryFocus?.unfocus();
-      await tester.pump();
-
-      expect(prefs.tvIp, '192.168.1.50');
+      expect(find.text('LG TV'), findsOneWidget);
+      expect(find.text('192.168.1.50'), findsOneWidget);
+      expect(find.text('In use'), findsOneWidget);
+      expect(find.text('Add a TV'), findsOneWidget);
+      expect(TvStore.list(prefs).single.mac, 'AA:BB:CC:DD:EE:FF');
     });
 
-    testWidgets('clearing the MAC field clears the saved MAC', (tester) async {
-      SharedPreferences.setMockInitialValues({'tv_mac': 'AA:BB:CC:DD:EE:FF'});
-      final (prefs, client, controller) = await _harness();
-      await tester.pumpWidget(_app(client, controller));
-      await tester.pump();
+    testWidgets(
+      'the detail screen saves edits when left and hides Use this TV for the active one',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({'tv_ip': '192.168.1.50'});
+        final (prefs, client, controller) = await _harness();
+        await tester.pumpWidget(_app(client, controller));
+        await tester.pump();
 
-      await tester.enterText(find.text('AA:BB:CC:DD:EE:FF'), '');
-      FocusManager.instance.primaryFocus?.unfocus();
-      await tester.pump();
+        await tester.tap(find.text('LG TV'));
+        await tester.pumpAndSettle();
 
-      expect(prefs.tvMac, '');
-    });
+        expect(find.byType(TvDetailScreen), findsOneWidget);
+        expect(find.text('Use this TV'), findsNothing);
+        expect(find.text('Remove this TV'), findsOneWidget);
 
-    testWidgets('a non-empty IP is committed on unfocus', (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final (prefs, client, controller) = await _harness();
-      await tester.pumpWidget(_app(client, controller));
-      await tester.pump();
+        await tester.enterText(
+          find.widgetWithText(TextField, 'LG TV'),
+          'Bedroom',
+        );
+        await tester.enterText(
+          find.widgetWithText(TextField, '192.168.1.50'),
+          '192.168.1.60',
+        );
+        final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+        navigator.pop();
+        await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).first, '10.0.2.2');
-      FocusManager.instance.primaryFocus?.unfocus();
-      await tester.pump();
+        final tv = TvStore.list(prefs).single;
+        expect(tv.name, 'Bedroom');
+        expect(tv.ip, '192.168.1.60');
+        // The active TV's edits follow into the live connection prefs.
+        expect(prefs.tvIp, '192.168.1.60');
+        expect(find.text('Bedroom'), findsOneWidget);
+      },
+    );
 
-      expect(prefs.tvIp, '10.0.2.2');
-    });
+    testWidgets(
+      'a second saved TV offers Use this TV, which switches the live prefs',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'tvs': jsonEncode([
+            {
+              'id': 'a',
+              'name': 'Living room',
+              'ip': '10.0.0.5',
+              'mac': 'AA:AA:AA:AA:AA:AA',
+              'key': 'ka',
+              'udn': '',
+            },
+            {
+              'id': 'b',
+              'name': 'Bedroom',
+              'ip': '10.0.0.6',
+              'mac': 'BB:BB:BB:BB:BB:BB',
+              'key': 'kb',
+              'udn': '',
+            },
+          ]),
+          'active_tv': 'a',
+          'tv_ip': '10.0.0.5',
+          'tv_mac': 'AA:AA:AA:AA:AA:AA',
+          'client_key': 'ka',
+        });
+        final (prefs, client, controller) = await _harness();
+        await tester.pumpWidget(_app(client, controller));
+        await tester.pump();
+
+        await tester.tap(find.text('Bedroom'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Use this TV'));
+        await tester.pumpAndSettle();
+
+        expect(TvStore.activeId(prefs), 'b');
+        expect(prefs.tvIp, '10.0.0.6');
+        expect(prefs.clientKey, 'kb');
+        expect(find.byType(SettingsScreen), findsOneWidget);
+      },
+    );
   });
 
   group('App shortcuts', () {
-    testWidgets('selecting a 5th app shows the "Max 4 shortcuts" toast', (tester) async {
+    testWidgets('selecting a 9th app shows the "Max 8 shortcuts" toast', (
+      tester,
+    ) async {
       final saved = jsonEncode([
-        {'id': 'app1', 'title': 'App1'},
-        {'id': 'app2', 'title': 'App2'},
-        {'id': 'app3', 'title': 'App3'},
-        {'id': 'app4', 'title': 'App4'},
+        for (var i = 1; i <= 8; i++) {'id': 'app$i', 'title': 'App$i'},
       ]);
       SharedPreferences.setMockInitialValues({'app_shortcuts': saved});
       final (_, client, controller) = await _harness();
 
-      Future<(List<TvApp>, String?)> fakeListApps() async => (
-            const [
-              TvApp('app1', 'App1'),
-              TvApp('app2', 'App2'),
-              TvApp('app3', 'App3'),
-              TvApp('app4', 'App4'),
-              TvApp('app5', 'App5'),
-            ],
-            null,
-          );
+      Future<(List<TvApp>, String?)> fakeListApps() async =>
+          ([for (var i = 1; i <= 9; i++) TvApp('app$i', 'App$i')], null);
 
       await tester.pumpWidget(_app(client, controller, listApps: fakeListApps));
       await tester.pump();
@@ -169,15 +246,50 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('App5'), findsOneWidget);
-      await tester.ensureVisible(find.text('App5'));
-      await tester.tap(find.text('App5'));
+      expect(find.text('App9'), findsOneWidget);
+      await tester.ensureVisible(find.text('App9'));
+      await tester.tap(find.text('App9'));
       await tester.pump();
 
-      expect(find.text('Max 4 shortcuts'), findsOneWidget);
+      expect(find.text('Max 8 shortcuts'), findsOneWidget);
       // showToast's auto-dismiss uses a real Timer; let it fire so the test
       // doesn't end with a pending timer (flutter_test's invariant check).
       await tester.pump(const Duration(seconds: 3));
+    });
+  });
+
+  group('About', () {
+    testWidgets('Show the tour queues the remote leg and leaves Settings', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final (prefs, client, controller) = await _harness();
+      await tester.pumpWidget(
+        AppTheme(
+          controller: controller,
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => SettingsScreen(client: client),
+                  ),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Show the tour'));
+      await tester.tap(find.text('Show the tour'));
+      await tester.pumpAndSettle();
+
+      expect(prefs.tourPending, isTrue);
+      expect(find.byType(SettingsScreen), findsNothing);
     });
   });
 }

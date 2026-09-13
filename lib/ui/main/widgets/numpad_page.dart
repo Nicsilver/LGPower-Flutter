@@ -104,10 +104,13 @@ class _NumpadPageState extends State<NumpadPage> with SingleTickerProviderStateM
       children: [
         SizedBox(
           width: double.infinity,
-          child: Text(
-            'LG TV Remote',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.primaryText),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              'Numpad',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.primaryText),
+            ),
           ),
         ),
         const Spacer(),
@@ -174,6 +177,17 @@ class _NumpadPageState extends State<NumpadPage> with SingleTickerProviderStateM
                 _echo('–');
               }, cd: 'Dash'),
             ]),
+            const SizedBox(height: 8),
+            // Wide OK under the digits: confirms a typed channel without a
+            // trip back to the d-pad
+            ghostKey(
+              'OK',
+              () => unawaited(widget.controller.pressSimple('ENTER')),
+              width: 280,
+              height: 52,
+              fontSize: 13,
+              cd: 'Enter',
+            ),
           ],
         ),
         const Spacer(),
@@ -210,17 +224,29 @@ class _NumpadPageState extends State<NumpadPage> with SingleTickerProviderStateM
           ],
         ),
         const SizedBox(height: 20),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            smallKey('GUIDE', () => unawaited(widget.controller.pressSimple('GUIDE'))),
-            const SizedBox(width: 14),
-            smallKey('INFO', () => unawaited(widget.controller.pressSimple('INFO'))),
-            const SizedBox(width: 14),
-            smallKey('CC', () => unawaited(widget.controller.pressSimple('CC')), cd: 'Subtitles'),
-            const SizedBox(width: 14),
-            smallKey('EXIT', () => unawaited(widget.controller.pressSimple('EXIT'))),
-          ],
+        // Five spaced keys outgrow a 360 dp screen; shrink the row rather
+        // than wrap it
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              smallKey('GUIDE', () => unawaited(widget.controller.pressSimple('GUIDE'))),
+              const SizedBox(width: 14),
+              smallKey('INFO', () => unawaited(widget.controller.pressSimple('INFO'))),
+              const SizedBox(width: 14),
+              smallKey('CC', () => unawaited(widget.controller.pressSimple('CC')), cd: 'Subtitles'),
+              const SizedBox(width: 14),
+              smallKey('EXIT', () => unawaited(widget.controller.pressSimple('EXIT'))),
+              const SizedBox(width: 14),
+              smallKey(
+                'LIVE TV',
+                () => unawaited(widget.controller.sendCommand(
+                    () => widget.controller.client.launchApp('com.webos.app.livetv'))),
+                cd: 'Live TV',
+              ),
+            ],
+          ),
         ),
         const Spacer(),
         Center(

@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/prefs.dart';
+import '../../core/right_pill.dart';
+import '../../core/tv_store.dart';
 import '../../net/tv_discovery.dart';
 import '../../net/webos_client.dart';
 
@@ -38,8 +40,11 @@ class RemoteController extends ChangeNotifier {
   int? currentVolume;
   bool currentMuted = false;
   int? currentBrightness;
-  bool rightPillChannel = false;
+  RightPill rightPill = RightPill.brightness;
   List<TvApp> shortcuts = const [];
+
+  /// The active TV's name, shown as the remote's title.
+  String tvName = 'LG TV Remote';
 
   int _wakeGen = 0;
   bool _discovering = false;
@@ -83,7 +88,9 @@ class RemoteController extends ChangeNotifier {
   /// rebuild shortcuts, restore cached levels, start watching.
   Future<void> onResume() async {
     client.resetConnection();
-    rightPillChannel = prefs.rightPillChannel;
+    TvStore.syncFromLive(prefs);
+    tvName = TvStore.activeName(prefs);
+    rightPill = RightPill.get(prefs);
     shortcuts = client.loadShortcuts();
     if (prefs.lastVolume >= 0) {
       setVolumeState(prefs.lastVolume, prefs.lastMuted);
@@ -103,6 +110,25 @@ class RemoteController extends ChangeNotifier {
     _stopWatching?.call();
     _stopWatching = null;
     _stopLevelsPoll();
+  }
+
+  /// Loads another saved TV: its live prefs replace the current ones and
+  /// every cached level is dropped, since they belonged to the old set.
+  Future<void> switchTv(String id) async {
+    onPause();
+    TvStore.switchTo(prefs, id);
+    currentVolume = null;
+    currentMuted = false;
+    currentBrightness = null;
+    currentScreenOff = false;
+    status = TvStatus.checking;
+    await onResume();
+  }
+
+  void renameTv(String id, String name) {
+    TvStore.rename(prefs, id, name);
+    tvName = TvStore.activeName(prefs);
+    _notify();
   }
 
   @override
@@ -165,7 +191,12 @@ class RemoteController extends ChangeNotifier {
         currentScreenOff = isOn && screenOff;
     }
     final nowConnected = tvConnected;
-    if (nowConnected && !wasConnected) _startLevelsPoll();
+    if (nowConnected && !wasConnected) {
+      _startLevelsPoll();
+      // Refreshes the cached input list so the after-wake picker has it with
+      // the TV off
+      unawaited(client.getInputs());
+    }
     if (!nowConnected && wasConnected) _stopLevelsPoll();
     _notify();
   }
@@ -242,7 +273,7 @@ class RemoteController extends ChangeNotifier {
     if (isOn) {
       await client.turnOff();
     } else {
-      await _wakeTv(gen, () => client.goHome());
+      await _wakeTv(gen, () => client.afterWake());
     }
   }
 
@@ -374,7 +405,14 @@ class RemoteController extends ChangeNotifier {
     _volumeSendTimer = null;
     setVolumeState(level, currentMuted);
     unawaited(() async {
+      // A send from the drag loop may still be in flight; if it lands after
+      // this one the TV ends up at the older level, so wait it out first.
+      final until = DateTime.now().add(const Duration(milliseconds: 1500));
+      while (_volumeSending && DateTime.now().isBefore(until)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
       await client.setVolume(level);
+      await client.settleVolume(level);
       _scheduleVolumeRefresh(const Duration(milliseconds: 200));
     }());
   }

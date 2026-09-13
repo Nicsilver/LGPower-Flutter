@@ -6,7 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// Load once at startup with [Prefs.load]; every getter after that is
 /// synchronous (SharedPreferences caches everything in memory once loaded),
-/// and every setter is async because it also persists to disk.
+/// and every setter is async because it also persists to disk. The in-memory
+/// value is updated before the returned future completes, so a setter
+/// followed by the matching getter on the same tick already reads the new
+/// value -- callers that don't care about the disk write may `unawaited` it.
 class Prefs {
   Prefs._(this._sp);
 
@@ -17,19 +20,25 @@ class Prefs {
     return Prefs._(sp);
   }
 
+  // Raw access for the keyed stores (saved TVs, per-TV shortcuts, wake
+  // actions, input caches) whose key names are computed at runtime.
+  String? getString(String key) => _sp.getString(key);
+  Future<void> setString(String key, String value) => _sp.setString(key, value);
+  bool? getBool(String key) => _sp.getBool(key);
+  Future<void> setBool(String key, bool value) => _sp.setBool(key, value);
+  bool containsKey(String key) => _sp.containsKey(key);
+  Future<void> remove(String key) => _sp.remove(key);
+
   String get tvIp => _sp.getString('tv_ip') ?? '';
   Future<void> setTvIp(String value) => _sp.setString('tv_ip', value);
 
   String get tvMac => _sp.getString('tv_mac') ?? '';
   Future<void> setTvMac(String value) => _sp.setString('tv_mac', value);
 
-  // Never cleared by the app — no unpair flow (spec §2.4).
+  // Never cleared by the app -- no unpair flow (spec §2.4). Switching TVs
+  // swaps it for the other TV's key (see TvStore).
   String? get clientKey => _sp.getString('client_key');
   Future<void> setClientKey(String value) => _sp.setString('client_key', value);
-
-  String? get appShortcutsJson => _sp.getString('app_shortcuts');
-  Future<void> setAppShortcutsJson(String value) =>
-      _sp.setString('app_shortcuts', value);
 
   int? colorFor(String appId) {
     final key = 'color_$appId';
@@ -39,16 +48,8 @@ class Prefs {
   Future<void> setColorFor(String appId, int argb) =>
       _sp.setInt('color_$appId', argb);
 
-  bool get volSlider => _sp.getBool('vol_slider') ?? true;
-  Future<void> setVolSlider(bool value) => _sp.setBool('vol_slider', value);
-
-  bool get brightnessSlider => _sp.getBool('brightness_slider') ?? true;
-  Future<void> setBrightnessSlider(bool value) =>
-      _sp.setBool('brightness_slider', value);
-
+  // Pre-1.35 switch; only read by RightPill's migration path.
   bool get rightPillChannel => _sp.getBool('right_pill_channel') ?? false;
-  Future<void> setRightPillChannel(bool value) =>
-      _sp.setBool('right_pill_channel', value);
 
   bool get keepScreenOn => _sp.getBool('keep_screen_on') ?? false;
   Future<void> setKeepScreenOn(bool value) =>
@@ -70,4 +71,15 @@ class Prefs {
 
   String get themeId => _sp.getString('theme_id') ?? 'dark';
   Future<void> setThemeId(String value) => _sp.setString('theme_id', value);
+
+  /// Set by first-run setup and Settings › About › Show the tour; the remote
+  /// consumes it on its next resume.
+  bool get tourPending => _sp.getBool('tour_pending') ?? false;
+  Future<void> setTourPending(bool value) => _sp.setBool('tour_pending', value);
+
+  /// Set when the remote's tour leg ends with "Open Settings"; Settings
+  /// consumes it on open.
+  bool get tourSettingsPending => _sp.getBool('tour_settings_pending') ?? false;
+  Future<void> setTourSettingsPending(bool value) =>
+      _sp.setBool('tour_settings_pending', value);
 }

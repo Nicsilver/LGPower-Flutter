@@ -7,14 +7,19 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/prefs.dart';
+import '../../core/right_pill.dart';
+import '../../core/tv_store.dart';
 import '../../net/ir.dart';
 import '../../net/webos_client.dart';
 import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
+import '../settings/settings_screen.dart';
+import '../setup/setup_screen.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/picker_sheet.dart';
-import '../settings/settings_screen.dart';
+import '../widgets/spotlight_tour.dart';
+import '../widgets/warning_sheet.dart';
 import 'dims.dart';
 import 'remote_controller.dart';
 import 'widgets/circle_button.dart';
@@ -27,10 +32,15 @@ import 'widgets/shortcuts_row.dart';
 import 'widgets/touchpad_overlay.dart';
 import 'whats_new.dart';
 
+/// Which row is sliding in over the bottom row right now: colours or media
+/// keys.
+enum _SlideRow { none, colors, media }
+
 /// The main remote screen (port spec `port-spec-main-ui.md`): scaffold, main
-/// column, header overlay, numpad page swap and colour-row swap. Everything
-/// else (connection/volume/brightness state, the wake sequence, the pointer
-/// gesture machine) lives in [RemoteController] / [TouchpadController].
+/// column, header overlay, numpad page swap and colour/media-row swap.
+/// Everything else (connection/volume/brightness state, the wake sequence,
+/// the pointer gesture machine) lives in [RemoteController] /
+/// [TouchpadController].
 ///
 /// [client]/[prefs] are optional so tests can inject a fake client directly;
 /// production call sites construct this with no arguments (after Setup, and
@@ -50,7 +60,19 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   final GlobalKey _rootKey = GlobalKey();
-  final GlobalKey _colorRowKey = GlobalKey();
+  final GlobalKey _slideRowKey = GlobalKey();
+
+  // Tour targets, ordered top to bottom so the ring only ever travels one way
+  final GlobalKey _titleKey = GlobalKey();
+  final GlobalKey _gearKey = GlobalKey();
+  final GlobalKey _shortcutsKey = GlobalKey();
+  final GlobalKey _powerKey = GlobalKey();
+  final GlobalKey _statusDotKey = GlobalKey();
+  final GlobalKey _touchpadKey = GlobalKey();
+  final GlobalKey _keyboardKey = GlobalKey();
+  final GlobalKey _volumePillKey = GlobalKey();
+  final GlobalKey _mediaKey = GlobalKey();
+  final GlobalKey _numpadKey = GlobalKey();
 
   RemoteController? _controllerOrNull;
   TouchpadController? _touchpadOrNull;
@@ -60,9 +82,10 @@ class _MainScreenState extends State<MainScreen>
 
   StreamSubscription<ToastMessage>? _toastSub;
   bool _numpadOpen = false;
-  bool _colorRowOpen = false;
-  bool _colorRowJustDismissed = false;
+  _SlideRow _slideRow = _SlideRow.none;
+  bool _slideRowJustDismissed = false;
   bool _hardwareKeysHooked = false;
+  bool _tourRunning = false;
 
   @override
   void initState() {
@@ -82,7 +105,11 @@ class _MainScreenState extends State<MainScreen>
     final client = widget.client ?? WebOsClient(prefs);
     if (!mounted) return;
     final controller = RemoteController(client: client, prefs: prefs);
-    final touchpad = TouchpadController(client: client, vsync: this, rootKey: _rootKey);
+    final touchpad = TouchpadController(
+      client: client,
+      vsync: this,
+      rootKey: _rootKey,
+    );
     _toastSub = controller.toasts.listen((m) {
       if (mounted) showToast(context, m.text, long: m.long);
     });
@@ -98,9 +125,16 @@ class _MainScreenState extends State<MainScreen>
       _hardwareKeysHooked = true;
     }
     // Fire-and-forget, same as onCreate's non-blocking dialog on Android --
-    // the rest of setup (already done above) doesn't wait on it.
+    // the rest of setup (already done above) doesn't wait on it. A pending
+    // tour takes precedence: two overlays on top of each other on first
+    // launch is one too many.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(maybeShowWhatsNew(context, prefs));
+      if (!mounted) return;
+      if (prefs.tourPending) {
+        unawaited(_maybeStartTour());
+      } else {
+        unawaited(maybeShowWhatsNew(context, prefs));
+      }
     });
   }
 
@@ -147,7 +181,9 @@ class _MainScreenState extends State<MainScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    if (_hardwareKeysHooked) HardwareKeyboard.instance.removeHandler(_onHardwareKey);
+    if (_hardwareKeysHooked) {
+      HardwareKeyboard.instance.removeHandler(_onHardwareKey);
+    }
     _toastSub?.cancel();
     _controllerOrNull?.dispose();
     _touchpadOrNull?.dispose();
@@ -156,31 +192,130 @@ class _MainScreenState extends State<MainScreen>
   }
 
   // ---------------------------------------------------------------------
-  // Settings / colour row / pickers
+  // Tour
+  // ---------------------------------------------------------------------
+
+  List<TourStep> get _tourSteps => [
+    TourStep(
+      [_titleKey],
+      'Your TVs',
+      'The current TV. Tap it to switch to another saved TV or to add one.',
+    ),
+    TourStep(
+      [_gearKey],
+      'Settings',
+      'Shortcuts, themes and the rest live behind the gear. The tour ends in there.',
+    ),
+    TourStep(
+      [_shortcutsKey],
+      'App shortcuts',
+      'These launch apps on the TV. You pick them in Settings, up to eight.',
+    ),
+    TourStep(
+      [_powerKey, _statusDotKey],
+      'Power',
+      "Turns the TV on from standby over the network, or with the phone's IR blaster if it has one. "
+          'The dot in the corner shows whether the TV is on.',
+    ),
+    TourStep(
+      [_touchpadKey],
+      'Touchpad',
+      'Tap and drag straight from this button to move the pointer. Hold it for a moment to lock the '
+          'touchpad open; Back closes it.',
+    ),
+    TourStep(
+      [_keyboardKey],
+      'Keyboard',
+      "Type on the phone, send to the TV. Works in the TV's search and browser; YouTube and Netflix "
+          'only accept their own on-screen keyboard.',
+    ),
+    TourStep(
+      [_volumePillKey],
+      'Volume',
+      "Tap the ends to step, or drag anywhere on the pill to slide. The phone's volume keys work here too.",
+    ),
+    TourStep(
+      [_mediaKey],
+      'Media keys',
+      'Rewind, play, pause and forward slide in at the bottom. Colors next to the numpad does the same '
+          'for the colour keys.',
+    ),
+    TourStep(
+      [_numpadKey],
+      'Numpad and more keys',
+      'Channel numbers, Guide, Info, subtitles and an OK key. Next opens Settings.',
+    ),
+  ];
+
+  /// Runs the remote's leg of the tour when setup or Settings asked for it;
+  /// finishing it hands over to the Settings leg.
+  Future<void> _maybeStartTour() async {
+    if (!_ready || _tourRunning || !_controller.prefs.tourPending) return;
+    _tourRunning = true;
+    await _controller.prefs.setTourPending(false);
+    // Let the enter transition settle so the highlight lands on laid-out
+    // widgets
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (!mounted) {
+      _tourRunning = false;
+      return;
+    }
+    if (_numpadOpen) setState(() => _numpadOpen = false);
+    final completed = await showSpotlightTour(
+      context,
+      _tourSteps,
+      lastLabel: 'Open Settings',
+    );
+    _tourRunning = false;
+    if (!mounted || !completed) return;
+    await _controller.prefs.setTourSettingsPending(true);
+    await _openSettings();
+  }
+
+  // ---------------------------------------------------------------------
+  // Settings / slide rows / pickers
   // ---------------------------------------------------------------------
 
   Future<void> _openSettings() async {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => SettingsScreen(client: _controller.client)),
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(client: _controller.client),
+      ),
     );
-    // Spec §12: re-read right_pill_channel/shortcuts/theme on return.
-    if (mounted) await _controller.onResume();
-    // keep_screen_on may have just changed in Settings; don't wait for the
-    // next lifecycle resume to pick it up.
-    if (mounted) await _syncWakelock();
+    await _afterReturn();
   }
 
-  void _onColorsTap() {
+  /// Everything a screen pushed over the remote may have changed: the active
+  /// TV, its shortcuts, the right pill, the theme, keep-screen-on, a queued
+  /// tour, or (after the last TV was removed) the connection itself.
+  Future<void> _afterReturn() async {
+    if (!mounted) return;
+    if (_controller.client.tvIp.isEmpty) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => SetupScreen(client: _controller.client),
+        ),
+      );
+      return;
+    }
+    await _controller.onResume();
+    if (!mounted) return;
+    await _syncWakelock();
+    if (!mounted) return;
+    await _maybeStartTour();
+  }
+
+  void _openSlideRow(_SlideRow row) {
     HapticFeedback.lightImpact();
-    if (!_colorRowJustDismissed) {
-      setState(() => _colorRowOpen = true);
+    if (!_slideRowJustDismissed) {
+      setState(() => _slideRow = row);
     }
   }
 
   void _onRootPointerDown(PointerDownEvent event) {
-    _colorRowJustDismissed = false;
-    if (!_colorRowOpen) return;
-    final box = _colorRowKey.currentContext?.findRenderObject();
+    _slideRowJustDismissed = false;
+    if (_slideRow == _SlideRow.none) return;
+    final box = _slideRowKey.currentContext?.findRenderObject();
     var inside = false;
     if (box is RenderBox && box.attached) {
       final rect = box.localToGlobal(Offset.zero) & box.size;
@@ -188,8 +323,8 @@ class _MainScreenState extends State<MainScreen>
     }
     if (!inside) {
       setState(() {
-        _colorRowOpen = false;
-        _colorRowJustDismissed = true;
+        _slideRow = _SlideRow.none;
+        _slideRowJustDismissed = true;
       });
     }
   }
@@ -206,7 +341,9 @@ class _MainScreenState extends State<MainScreen>
       context,
       title: 'Input Source',
       rows: [for (final i in inputs) (i.id, i.label, false)],
-      onSelect: (id) => unawaited(_controller.sendCommand(() => _controller.client.switchInput(id))),
+      onSelect: (id) => unawaited(
+        _controller.sendCommand(() => _controller.client.switchInput(id)),
+      ),
     );
   }
 
@@ -218,10 +355,12 @@ class _MainScreenState extends State<MainScreen>
       context,
       title: 'Picture Mode',
       rows: [
-        for (final mode in WebOsClient.pictureModes) (mode.$1, mode.$2, mode.$1 == current),
+        for (final mode in WebOsClient.pictureModes)
+          (mode.$1, mode.$2, mode.$1 == current),
       ],
-      onSelect: (id) =>
-          unawaited(_controller.sendCommand(() => _controller.client.setPictureMode(id))),
+      onSelect: (id) => unawaited(
+        _controller.sendCommand(() => _controller.client.setPictureMode(id)),
+      ),
     );
   }
 
@@ -233,10 +372,96 @@ class _MainScreenState extends State<MainScreen>
       context,
       title: 'Sound Mode',
       rows: [
-        for (final mode in WebOsClient.soundModes) (mode.$1, mode.$2, mode.$1 == current),
+        for (final mode in WebOsClient.soundModes)
+          (mode.$1, mode.$2, mode.$1 == current),
       ],
-      onSelect: (id) => unawaited(_controller.sendCommand(() => _controller.client.setSoundMode(id))),
+      onSelect: (id) => unawaited(
+        _controller.sendCommand(() => _controller.client.setSoundMode(id)),
+      ),
     );
+  }
+
+  // ---------------------------------------------------------------------
+  // Saved TVs (title picker)
+  // ---------------------------------------------------------------------
+
+  static const _addTvId = '__add';
+
+  Future<void> _openTvPicker() async {
+    HapticFeedback.lightImpact();
+    final prefs = _controller.prefs;
+    final tvs = TvStore.list(prefs);
+    final activeId = TvStore.activeId(prefs);
+    await showPickerSheet(
+      context,
+      title: 'TVs',
+      rows: [
+        for (final tv in tvs) (tv.id, tv.name, tv.id == activeId),
+        (_addTvId, 'Add another TV…', false),
+      ],
+      onLongPress: (id) {
+        if (id != _addTvId) unawaited(_showTvActions(id));
+      },
+      onSelect: (id) {
+        if (id == _addTvId) {
+          unawaited(_addTv());
+        } else if (id != activeId) {
+          unawaited(_controller.switchTv(id));
+        }
+      },
+    );
+  }
+
+  Future<void> _addTv() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SetupScreen(client: _controller.client, addMode: true),
+      ),
+    );
+    await _afterReturn();
+  }
+
+  Future<void> _showTvActions(String id) async {
+    final tv = TvStore.list(
+      _controller.prefs,
+    ).where((t) => t.id == id).firstOrNull;
+    if (tv == null || !mounted) return;
+    await showPickerSheet(
+      context,
+      title: tv.name,
+      rows: const [('rename', 'Rename', false), ('remove', 'Remove', false)],
+      onSelect: (action) {
+        switch (action) {
+          case 'rename':
+            unawaited(_showRenameDialog(tv));
+          case 'remove':
+            unawaited(
+              showWarningSheet(
+                context,
+                chip: 'REMOVE TV',
+                title: 'Remove ${tv.name}?',
+                body:
+                    'The pairing with this TV is forgotten. You can add it again from the TV picker, '
+                    'which asks the TV to pair once more.',
+                button: 'Remove',
+                onAccept: () {
+                  TvStore.remove(_controller.prefs, id);
+                  unawaited(_afterReturn());
+                },
+              ),
+            );
+        }
+      },
+    );
+  }
+
+  Future<void> _showRenameDialog(Tv tv) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameDialog(initial: tv.name),
+    );
+    if (name == null || !mounted) return;
+    _controller.renameTv(tv.id, name);
   }
 
   // ---------------------------------------------------------------------
@@ -244,12 +469,12 @@ class _MainScreenState extends State<MainScreen>
   // ---------------------------------------------------------------------
 
   Color _statusColor(TvStatus status) => switch (status) {
-        TvStatus.checking => const Color(0xFF888888),
-        TvStatus.connected => const Color(0xFF4CAF50),
-        TvStatus.searching => const Color(0xFFFF9800),
-        TvStatus.pairing => const Color(0xFFFF9800),
-        TvStatus.disconnected => const Color(0xFFF44336),
-      };
+    TvStatus.checking => const Color(0xFF888888),
+    TvStatus.connected => const Color(0xFF4CAF50),
+    TvStatus.searching => const Color(0xFFFF9800),
+    TvStatus.pairing => const Color(0xFFFF9800),
+    TvStatus.disconnected => const Color(0xFFF44336),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -259,7 +484,10 @@ class _MainScreenState extends State<MainScreen>
       // brief enough (SharedPreferences is already warm by the time Setup or
       // main.dart gets here) that a themed blank frame reads better than a
       // spinner.
-      return Scaffold(backgroundColor: theme.windowBg, body: const SizedBox.shrink());
+      return Scaffold(
+        backgroundColor: theme.windowBg,
+        body: const SizedBox.shrink(),
+      );
     }
     return ListenableBuilder(
       listenable: _touchpad,
@@ -282,33 +510,34 @@ class _MainScreenState extends State<MainScreen>
             body: SafeArea(
               bottom: false,
               child: Listener(
-              onPointerDown: _onRootPointerDown,
-              behavior: HitTestBehavior.translucent,
-              child: Stack(
-                key: _rootKey,
-                children: [
-                  ListenableBuilder(
-                    listenable: _controller,
-                    builder: (context, _) {
-                      final dims = MainDims.of(context);
-                      return Stack(
-                        children: [
-                          Positioned.fill(
-                            child: _numpadOpen
-                                ? NumpadPage(
-                                    controller: _controller,
-                                    onClose: () => setState(() => _numpadOpen = false),
-                                  )
-                                : _buildMainColumn(theme, dims),
-                          ),
-                          _header(theme),
-                        ],
-                      );
-                    },
-                  ),
-                  TouchpadOverlayLayer(controller: _touchpad),
-                ],
-              ),
+                onPointerDown: _onRootPointerDown,
+                behavior: HitTestBehavior.translucent,
+                child: Stack(
+                  key: _rootKey,
+                  children: [
+                    ListenableBuilder(
+                      listenable: _controller,
+                      builder: (context, _) {
+                        final dims = MainDims.of(context);
+                        return Stack(
+                          children: [
+                            Positioned.fill(
+                              child: _numpadOpen
+                                  ? NumpadPage(
+                                      controller: _controller,
+                                      onClose: () =>
+                                          setState(() => _numpadOpen = false),
+                                    )
+                                  : _buildMainColumn(theme, dims),
+                            ),
+                            _header(theme),
+                          ],
+                        );
+                      },
+                    ),
+                    TouchpadOverlayLayer(controller: _touchpad),
+                  ],
+                ),
               ),
             ),
           ),
@@ -319,19 +548,24 @@ class _MainScreenState extends State<MainScreen>
 
   Widget _header(ThemeConfig theme) {
     return Positioned(
-      top: 8,
+      top: 12,
       right: 8,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
+            key: _statusDotKey,
             width: 6,
             height: 6,
             margin: const EdgeInsets.only(right: 4),
-            decoration: BoxDecoration(color: _statusColor(_controller.status), shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: _statusColor(_controller.status),
+              shape: BoxShape.circle,
+            ),
           ),
           GestureDetector(
+            key: _gearKey,
             onTap: () => unawaited(_openSettings()),
             child: Semantics(
               button: true,
@@ -341,7 +575,13 @@ class _MainScreenState extends State<MainScreen>
                 child: SizedBox(
                   width: 44,
                   height: 44,
-                  child: Center(child: AppIcon('ic_settings', size: 24, color: theme.primaryText)),
+                  child: Center(
+                    child: AppIcon(
+                      'ic_settings',
+                      size: 24,
+                      color: theme.primaryText,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -355,30 +595,77 @@ class _MainScreenState extends State<MainScreen>
     return FillViewportPage(
       padding: EdgeInsets.fromLTRB(dims.mainPadH, 16, dims.mainPadH, 48),
       children: [
-        SizedBox(
-          width: double.infinity,
-          child: Text(
-            'LG TV Remote',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.primaryText),
-          ),
-        ),
+        _title(theme),
         const Spacer(),
-        ShortcutsRow(controller: _controller),
+        ShortcutsRow(key: _shortcutsKey, controller: _controller),
         const Spacer(),
         _powerRow(theme),
         const Spacer(),
         Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Transform.translate(offset: const Offset(0, 8), child: _homeMuteInputRow(theme, dims)),
+            Transform.translate(
+              offset: const Offset(0, 8),
+              child: _homeMuteInputRow(theme, dims),
+            ),
             _pillsAndDpadRow(theme, dims),
-            Transform.translate(offset: const Offset(0, -8), child: _backMenuRow(theme, dims)),
+            Transform.translate(
+              offset: const Offset(0, -8),
+              child: _backMenuRow(theme, dims),
+            ),
           ],
         ),
         const Spacer(),
         _bottomArea(theme),
       ],
+    );
+  }
+
+  /// The title is the active TV's name and opens the saved-TV picker. The
+  /// pressed state hugs the text as a rounded pill.
+  Widget _title(ThemeConfig theme) {
+    return Center(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: _titleKey,
+          borderRadius: BorderRadius.circular(12),
+          splashColor: theme.primaryText.withAlpha(0x22),
+          highlightColor: theme.primaryText.withAlpha(0x22),
+          onTap: () => unawaited(_openTvPicker()),
+          child: Semantics(
+            button: true,
+            label: 'TVs',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 240),
+                    child: Text(
+                      _controller.tvName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: theme.primaryText,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  AppIcon(
+                    'ic_chevron_down',
+                    size: 18,
+                    color: theme.secondaryText,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -388,6 +675,7 @@ class _MainScreenState extends State<MainScreen>
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         CircleButton(
+          circleKey: _powerKey,
           size: 72,
           color: const Color(0xFFE53935),
           label: 'Power',
@@ -403,13 +691,17 @@ class _MainScreenState extends State<MainScreen>
         Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TouchpadButton(controller: _touchpad),
+            TouchpadButton(key: _touchpadKey, controller: _touchpad),
             const SizedBox(height: 5),
-            Text('Touchpad', style: TextStyle(fontSize: 11, color: theme.secondaryText)),
+            Text(
+              'Touchpad',
+              style: TextStyle(fontSize: 11, color: theme.secondaryText),
+            ),
           ],
         ),
         const SizedBox(width: 28),
         CircleButton(
+          circleKey: _keyboardKey,
           size: 72,
           color: theme.circleBtnBg,
           label: 'Keyboard',
@@ -420,7 +712,11 @@ class _MainScreenState extends State<MainScreen>
             HapticFeedback.lightImpact();
             unawaited(showKeyboardSheet(context, _controller));
           },
-          child: AppIcon('ic_keyboard', size: 28, color: theme.circleBtnIconTint),
+          child: AppIcon(
+            'ic_keyboard',
+            size: 28,
+            color: theme.circleBtnIconTint,
+          ),
         ),
       ],
     );
@@ -451,8 +747,10 @@ class _MainScreenState extends State<MainScreen>
     VoidCallback? onLongPress,
     Color? background,
     Color? iconColor,
+    Key? circleKey,
   }) {
     return CircleButton(
+      circleKey: circleKey,
       size: size,
       color: background ?? theme.circleBtnBg,
       label: label,
@@ -461,7 +759,11 @@ class _MainScreenState extends State<MainScreen>
       semanticLabel: semanticLabel,
       onTap: onTap,
       onLongPress: onLongPress,
-      child: AppIcon(icon, size: iconSize, color: iconColor ?? theme.circleBtnIconTint),
+      child: AppIcon(
+        icon,
+        size: iconSize,
+        color: iconColor ?? theme.circleBtnIconTint,
+      ),
     );
   }
 
@@ -526,7 +828,23 @@ class _MainScreenState extends State<MainScreen>
           onTap: () => unawaited(_controller.pressSimple('BACK')),
           onLongPress: () => unawaited(_controller.pressSimple('EXIT')),
         ),
-        SizedBox(width: dims.dpadBottomGap),
+        // The Media button sits in the gap under the d-pad
+        SizedBox(
+          width: dims.dpadBottomGap,
+          child: Center(
+            child: _iconCell(
+              theme: theme,
+              circleKey: _mediaKey,
+              size: 52,
+              icon: 'ic_media',
+              iconSize: 28,
+              label: 'Media',
+              semanticLabel: 'Media keys',
+              labelTopMargin: 4,
+              onTap: () => _openSlideRow(_SlideRow.media),
+            ),
+          ),
+        ),
         _iconCell(
           theme: theme,
           size: 52,
@@ -549,16 +867,18 @@ class _MainScreenState extends State<MainScreen>
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         LevelPill(
+          pillKey: _volumePillKey,
           width: dims.pillWidth,
           height: dims.dpadSize,
           label: _controller.currentVolume?.toString() ?? '',
           level: _controller.currentVolume,
-          fillColor: _controller.currentMuted ? const Color(0x66888888) : const Color(0x664FC3F7),
+          fillColor: _controller.currentMuted
+              ? const Color(0x66888888)
+              : const Color(0x664FC3F7),
           topIcon: 'ic_volume_up',
           bottomIcon: 'ic_volume_down',
           topSemanticLabel: 'Volume Up',
           bottomSemanticLabel: 'Volume Down',
-          sliderEnabled: _controller.prefs.volSlider,
           onTapUp: _controller.volumeTapUp,
           onTapDown: _controller.volumeTapDown,
           onDragMove: _controller.volumeDragMove,
@@ -567,7 +887,7 @@ class _MainScreenState extends State<MainScreen>
         SizedBox(width: dims.pillGap),
         Dpad(controller: _controller, size: dims.dpadSize, okSize: dims.okSize),
         SizedBox(width: dims.pillGap),
-        _controller.rightPillChannel
+        _controller.rightPill == RightPill.channel
             ? LevelPill(
                 width: dims.pillWidth,
                 height: dims.dpadSize,
@@ -592,7 +912,6 @@ class _MainScreenState extends State<MainScreen>
                 bottomIcon: 'ic_brightness_down',
                 topSemanticLabel: 'Brightness Up',
                 bottomSemanticLabel: 'Brightness Down',
-                sliderEnabled: _controller.prefs.brightnessSlider,
                 onTapUp: _controller.brightnessTapUp,
                 onTapDown: _controller.brightnessTapDown,
                 onDragMove: _controller.brightnessDragMove,
@@ -603,19 +922,44 @@ class _MainScreenState extends State<MainScreen>
   }
 
   Widget _bottomArea(ThemeConfig theme) {
-    if (_colorRowOpen) {
-      return Row(
-        key: _colorRowKey,
-        children: [
-          Expanded(child: _colorCell(theme, const Color(0xFFE53935), 'Red')),
-          Expanded(child: _colorCell(theme, const Color(0xFF2E7D32), 'Green')),
-          Expanded(child: _colorCell(theme, const Color(0xFFF9A825), 'Yellow')),
-          Expanded(child: _colorCell(theme, const Color(0xFF1565C0), 'Blue')),
-        ],
-      );
+    switch (_slideRow) {
+      case _SlideRow.colors:
+        return Row(
+          key: _slideRowKey,
+          children: [
+            Expanded(child: _colorCell(theme, const Color(0xFFE53935), 'Red')),
+            Expanded(
+              child: _colorCell(theme, const Color(0xFF2E7D32), 'Green'),
+            ),
+            Expanded(
+              child: _colorCell(theme, const Color(0xFFF9A825), 'Yellow'),
+            ),
+            Expanded(child: _colorCell(theme, const Color(0xFF1565C0), 'Blue')),
+          ],
+        );
+      case _SlideRow.media:
+        return Row(
+          key: _slideRowKey,
+          children: [
+            Expanded(child: _mediaCell(theme, 'ic_rewind', 'Rewind', 'REWIND')),
+            Expanded(child: _mediaCell(theme, 'ic_play', 'Play', 'PLAY')),
+            Expanded(child: _mediaCell(theme, 'ic_pause', 'Pause', 'PAUSE')),
+            Expanded(
+              child: _mediaCell(
+                theme,
+                'ic_fast_forward',
+                'Forward',
+                'FASTFORWARD',
+                semantic: 'Fast forward',
+              ),
+            ),
+          ],
+        );
+      case _SlideRow.none:
+        break;
     }
     return Row(
-      key: _colorRowKey,
+      key: _slideRowKey,
       children: [
         Expanded(
           child: _bottomCell(
@@ -647,7 +991,7 @@ class _MainScreenState extends State<MainScreen>
             label: 'Colors',
             semanticLabel: 'Color Buttons',
             tint: false,
-            onTap: _onColorsTap,
+            onTap: () => _openSlideRow(_SlideRow.colors),
           ),
         ),
         Expanded(
@@ -675,7 +1019,9 @@ class _MainScreenState extends State<MainScreen>
     bool tint = true,
   }) {
     final bg = active ? theme.btnAccentBg : theme.circleBtnBg;
-    final iconColor = !tint ? null : (active ? theme.btnAccentText : theme.circleBtnIconTint);
+    final iconColor = !tint
+        ? null
+        : (active ? theme.btnAccentText : theme.circleBtnIconTint);
     return CircleButton(
       size: 56,
       color: bg,
@@ -690,6 +1036,7 @@ class _MainScreenState extends State<MainScreen>
 
   Widget _numpadCell(ThemeConfig theme) {
     return CircleButton(
+      circleKey: _numpadKey,
       size: 56,
       color: theme.circleBtnBg,
       label: 'Numpad',
@@ -702,7 +1049,11 @@ class _MainScreenState extends State<MainScreen>
       },
       child: Text(
         '123',
-        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: theme.primaryText),
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.bold,
+          color: theme.primaryText,
+        ),
       ),
     );
   }
@@ -717,6 +1068,95 @@ class _MainScreenState extends State<MainScreen>
       semanticLabel: label,
       onTap: () => unawaited(_controller.pressSimple(label.toUpperCase())),
       child: const SizedBox.shrink(),
+    );
+  }
+
+  Widget _mediaCell(
+    ThemeConfig theme,
+    String icon,
+    String label,
+    String keyCode, {
+    String? semantic,
+  }) {
+    return _bottomCell(
+      theme: theme,
+      icon: icon,
+      iconSize: 24,
+      label: label,
+      semanticLabel: semantic ?? label,
+      onTap: () => unawaited(_controller.pressSimple(keyCode)),
+    );
+  }
+}
+
+/// Owns its controller so it outlives the dialog's closing transition (see
+/// the same note on Setup's manual-IP dialog).
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial)
+        ..selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: widget.initial.length,
+        );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() => Navigator.of(context).pop(_controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = AppTheme.of(context);
+    return AlertDialog(
+      backgroundColor: theme.surfaceBg,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text('Rename TV', style: TextStyle(color: theme.primaryText)),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textCapitalization: TextCapitalization.sentences,
+        style: TextStyle(fontSize: 15, color: theme.primaryText),
+        decoration: InputDecoration(
+          isDense: true,
+          filled: true,
+          fillColor: theme.windowBg,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 10,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: theme.btnGhostBorder),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: theme.btnGhostBorderPressed),
+          ),
+        ),
+        onSubmitted: (_) => _save(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('Cancel', style: TextStyle(color: theme.secondaryText)),
+        ),
+        TextButton(
+          onPressed: _save,
+          child: Text('Save', style: TextStyle(color: theme.btnAccentBg)),
+        ),
+      ],
     );
   }
 }

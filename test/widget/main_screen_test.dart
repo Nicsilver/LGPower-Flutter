@@ -15,7 +15,9 @@ import 'package:lgpower/ui/main/main_screen.dart';
 import 'package:lgpower/ui/main/widgets/level_pill.dart';
 import 'package:lgpower/ui/main/widgets/numpad_page.dart';
 
-const _packageInfoChannel = MethodChannel('dev.fluttercommunity.plus/package_info');
+const _packageInfoChannel = MethodChannel(
+  'dev.fluttercommunity.plus/package_info',
+);
 
 // MainScreen calls WakelockPlus on every bootstrap/resume regardless of the
 // keep_screen_on pref's value (off just means "disable", still a real
@@ -66,12 +68,20 @@ class FakeWebOsClient extends WebOsClient {
 
   @override
   Future<int?> getBrightness() async => null;
+
+  // Refreshed on every connect for the after-wake picker's cache; a real
+  // call would open a socket to the fake address.
+  @override
+  Future<(List<InputSource>, String?)> getInputs() async =>
+      (const <InputSource>[], null);
 }
 
 Future<Prefs> _freshPrefs() async {
   SharedPreferences.setMockInitialValues({});
   final prefs = await Prefs.load();
-  await prefs.setTvIp('fake-tv'); // non-empty -- keeps startWatching() off the autoDiscover path
+  await prefs.setTvIp(
+    'fake-tv',
+  ); // non-empty -- keeps startWatching() off the autoDiscover path
   await prefs.setLastSeenVersion(1 << 30); // suppress the what's-new dialog
   return prefs;
 }
@@ -95,15 +105,20 @@ Future<void> _pumpMainScreen(
   // fake-async test zone alone this combination hangs pumpWidget forever;
   // runAsync briefly steps outside that zone so both settle normally.
   await tester.runAsync(() async {
-    final themeController = AppThemeController(await ThemeManager.loadTheme('dark'));
-    await tester.pumpWidget(MaterialApp(
-      home: AppTheme(
-        controller: themeController,
-        child: MainScreen(client: client, prefs: prefs),
+    final themeController = AppThemeController(
+      await ThemeManager.loadTheme('dark'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppTheme(
+          controller: themeController,
+          child: MainScreen(client: client, prefs: prefs),
+        ),
       ),
-    ));
+    );
   });
-  await tester.pump(); // let the bootstrap microtask (client/prefs already supplied) settle
+  await tester
+      .pump(); // let the bootstrap microtask (client/prefs already supplied) settle
 }
 
 void main() {
@@ -113,28 +128,33 @@ void main() {
   // its channel so that resolves instead of throwing MissingPluginException.
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(_packageInfoChannel, (call) async {
-    if (call.method == 'getAll') {
-      return <String, dynamic>{
-        'appName': 'lgpower',
-        'packageName': 'com.nic.lgpower.flutter',
-        'version': '1.0.0',
-        'buildNumber': '1',
-        'buildSignature': '',
-      };
-    }
-    return null;
-  });
+        if (call.method == 'getAll') {
+          return <String, dynamic>{
+            'appName': 'lgpower',
+            'packageName': 'com.nic.lgpower.flutter',
+            'version': '1.0.0',
+            'buildNumber': '1',
+            'buildSignature': '',
+          };
+        }
+        return null;
+      });
 
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-      .setMockDecodedMessageHandler<Object?>(_wakelockToggleChannel, (message) async => <Object?>[null]);
+      .setMockDecodedMessageHandler<Object?>(
+        _wakelockToggleChannel,
+        (message) async => <Object?>[null],
+      );
 
   testWidgets('remote labels are present', (tester) async {
     final prefs = await _freshPrefs();
     final client = FakeWebOsClient(prefs);
     await _pumpMainScreen(tester, prefs: prefs, client: client);
 
+    // A pre-saved-TVs install (flat tv_ip only) migrates into one TV named
+    // "LG TV", which is what the title now shows.
     for (final label in [
-      'LG TV Remote',
+      'LG TV',
       'Power',
       'Touchpad',
       'Keyboard',
@@ -143,6 +163,7 @@ void main() {
       'Input',
       'OK',
       'Back',
+      'Media',
       'Menu',
       'Screen Off',
       'Picture',
@@ -150,7 +171,11 @@ void main() {
       'Colors',
       'Sound',
     ]) {
-      expect(find.text(label), findsOneWidget, reason: 'missing label "$label"');
+      expect(
+        find.text(label),
+        findsOneWidget,
+        reason: 'missing label "$label"',
+      );
     }
   });
 
@@ -220,7 +245,9 @@ void main() {
     expect(client.pressedKeys, containsAllInOrder(['1', '2']));
   });
 
-  testWidgets('colour row opens on tap and closes on an outside tap', (tester) async {
+  testWidgets('colour row opens on tap and closes on an outside tap', (
+    tester,
+  ) async {
     // Disposed explicitly at the end of the test body, not via addTearDown --
     // the global tearDown queue runs after this binding's own end-of-test
     // "handle still active" check, so addTearDown(handle.dispose) is too late.
@@ -239,8 +266,9 @@ void main() {
     expect(find.text('Red'), findsOneWidget);
     expect(find.text('Colors'), findsNothing);
 
-    // Tap something well outside the bottom row -- the title -- to dismiss.
-    await tester.tap(find.text('LG TV Remote'));
+    // Tap something well outside the bottom row -- the Power caption, which
+    // is not itself a tap target -- to dismiss.
+    await tester.tap(find.text('Power'));
     await tester.pump();
     expect(find.text('Red'), findsNothing);
     expect(find.text('Colors'), findsOneWidget);
@@ -253,8 +281,12 @@ void main() {
     await _pumpMainScreen(tester, prefs: prefs, client: client);
 
     Color dotColor() {
-      final decorated = tester.widgetList<Container>(find.byType(Container)).firstWhere(
-            (c) => c.constraints == const BoxConstraints.tightFor(width: 6, height: 6),
+      final decorated = tester
+          .widgetList<Container>(find.byType(Container))
+          .firstWhere(
+            (c) =>
+                c.constraints ==
+                const BoxConstraints.tightFor(width: 6, height: 6),
           );
       return (decorated.decoration! as BoxDecoration).color!;
     }

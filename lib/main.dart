@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'core/prefs.dart';
+import 'core/tv_store.dart';
 import 'net/webos_client.dart';
 import 'theme/theme_manager.dart';
 import 'ui/main/main_screen.dart';
@@ -17,6 +18,9 @@ Future<void> main() async {
   ]);
 
   final prefs = await Prefs.load();
+  // Folds a pre-saved-TVs install's flat prefs into the TV list before any
+  // screen reads it
+  TvStore.list(prefs);
   final client = WebOsClient(prefs);
   final controller = await AppThemeController.load();
 
