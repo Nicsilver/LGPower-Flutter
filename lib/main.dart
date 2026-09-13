@@ -1,6 +1,10 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'core/prefs.dart';
@@ -16,6 +20,15 @@ Future<void> main() async {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+  // Some Android skins (OnePlus, Samsung) leave a Flutter app at 60 Hz unless
+  // it asks for the panel's highest mode; a native activity gets 120 Hz for free.
+  if (!kIsWeb && Platform.isAndroid) {
+    try {
+      await FlutterDisplayMode.setHighRefreshRate();
+    } catch (_) {
+      // No high-rate mode, or an OEM that refuses -- 60 Hz is not an error.
+    }
+  }
 
   final prefs = await Prefs.load();
   // Folds a pre-saved-TVs install's flat prefs into the TV list before any
