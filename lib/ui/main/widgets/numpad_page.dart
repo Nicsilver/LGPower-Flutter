@@ -100,7 +100,8 @@ class _NumpadPageState extends State<NumpadPage> with SingleTickerProviderStateM
     }
 
     return FillViewportPage(
-      padding: EdgeInsets.symmetric(horizontal: dims.mainPadH, vertical: 16),
+      // Same insets as the remote so the Remote button lands where 123 sits
+      padding: EdgeInsets.fromLTRB(dims.mainPadH, 16, dims.mainPadH, 48),
       children: [
         SizedBox(
           width: double.infinity,

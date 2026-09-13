@@ -67,7 +67,9 @@ class LgPowerApp extends StatelessWidget {
               splashFactory: NoSplash.splashFactory,
               pageTransitionsTheme: const PageTransitionsTheme(
                 builders: {
-                  TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+                  // Android's own activity open/close since Q: a scale-and-fade,
+                  // which is what the Kotlin app gets for free
+                  TargetPlatform.android: ZoomPageTransitionsBuilder(),
                   TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
                 },
               ),

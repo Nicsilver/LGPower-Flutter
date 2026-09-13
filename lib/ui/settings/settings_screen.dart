@@ -751,7 +751,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             if (value != null && value.isNotEmpty) ...[
-              Flexible(
+              // Capped rather than flexible: a Flexible here is handed half the
+              // row and the value ends up left-aligned in the middle
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
                 child: Text(
                   value,
                   maxLines: 1,
