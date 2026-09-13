@@ -45,3 +45,7 @@ app.*.map.json
 /android/app/release
 CLAUDE.md
 .plans/
+
+# Release signing, written by CI from secrets
+android/key.properties
+android/app/upload-keystore.jks

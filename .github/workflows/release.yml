@@ -1,0 +1,63 @@
+name: Build & Release APK + AAB
+
+# One v* tag ships both stores: this builds the signed Android artifacts and
+# attaches the APK to a GitHub Release; codemagic.yaml builds iOS for TestFlight
+# off the same tag. Nothing goes to Google Play from here yet: the Kotlin app in
+# Nicsilver/LGPower still owns the Play listing for com.nic.lgpower.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+
+      - name: Write signing config
+        run: |
+          cat > android/key.properties <<EOF
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=upload-keystore.jks
+          EOF
+
+      - name: Run tests
+        run: flutter test --exclude-tags faketv
+
+      - name: Build release APK + AAB
+        run: |
+          flutter build apk --release
+          flutter build appbundle --release
+
+      - name: Name the artifact
+        run: cp build/app/outputs/flutter-apk/app-release.apk lgpower-${{ github.ref_name }}.apk
+
+      # Only when a tag is pushed; workflow_dispatch just builds (a signing smoke-test).
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: lgpower-${{ github.ref_name }}.apk
+          generate_release_notes: true
