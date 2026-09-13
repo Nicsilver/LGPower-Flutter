@@ -24,7 +24,8 @@ workflows:
       - name: Fetch dependencies
         script: flutter pub get
       - name: Run tests
-        script: flutter test
+        # The protocol tests talk to the fake webOS TV, which only runs locally
+        script: flutter test --exclude-tags faketv
       - name: Apply signing profiles
         script: xcode-project use-profiles
       - name: Build signed ipa

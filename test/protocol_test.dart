@@ -1,6 +1,10 @@
 // Exercises the protocol layer against the fake webOS TV (tools/faketv in
 // LGPowerWidget) already listening on 127.0.0.1:3001 (wss, self-signed) and
-// 127.0.0.1:3002 (icons). Never starts a second copy.
+// 127.0.0.1:3002 (icons). Never starts a second copy. Tagged so CI, which has
+// no fake TV, runs `flutter test --exclude-tags faketv`.
+@Tags(['faketv'])
+library;
+
 import 'dart:async';
 import 'dart:convert';
 

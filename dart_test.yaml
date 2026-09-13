@@ -1,0 +1,3 @@
+tags:
+  faketv:
+    description: Needs tools/faketv from LGPowerWidget listening on 127.0.0.1:3001
