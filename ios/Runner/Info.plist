@@ -72,5 +72,12 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
+	<!-- Portrait-only on iPad is only accepted by App Store Connect when the app
+	     opts out of Split View / Slide Over (ITMS-90474 otherwise). -->
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<!-- HTTPS/TLS only: pre-answers export compliance on every upload -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
