@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Used by `flutter build ipa --export-options-plist` in the release workflow.
+	     Manual signing: the certificate comes from the APPSTORE_CERTIFICATES_* secrets
+	     and the profile is fetched from Apple by name at build time, so the name here
+	     must match the profile in the developer portal exactly. -->
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string>8Y47UY54PT</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.nic.lgpower</key>
+		<string>LG Power App Store</string>
+	</dict>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>

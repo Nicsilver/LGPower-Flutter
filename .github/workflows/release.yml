@@ -1,9 +1,12 @@
-name: Build & Release APK + AAB
+name: Build & Release
 
-# One v* tag ships both stores: this builds the signed Android artifacts and
-# attaches the APK to a GitHub Release; codemagic.yaml builds iOS for TestFlight
-# off the same tag. Nothing goes to Google Play from here yet: the Kotlin app in
+# One v* tag ships both stores: Android builds a signed APK + AAB and attaches
+# the APK to a GitHub Release; iOS builds a signed .ipa and uploads it to
+# TestFlight. Nothing goes to Google Play from here yet: the Kotlin app in
 # Nicsilver/LGPower still owns the Play listing for com.nic.lgpower.
+#
+# macOS runners are free and unmetered because the repo is public; keep it
+# public or the ios job starts costing 10x Linux minutes.
 on:
   push:
     tags:
@@ -14,7 +17,19 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+      # The protocol tests talk to the fake webOS TV, which only runs locally.
+      - run: flutter test --exclude-tags faketv
+
+  android:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -43,9 +58,6 @@ jobs:
           storeFile=upload-keystore.jks
           EOF
 
-      - name: Run tests
-        run: flutter test --exclude-tags faketv
-
       - name: Build release APK + AAB
         run: |
           flutter build apk --release
@@ -61,3 +73,55 @@ jobs:
         with:
           files: lgpower-${{ github.ref_name }}.apk
           generate_release_notes: true
+
+  ios:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
+      # The Apple Distribution certificate goes into a throwaway keychain on the runner.
+      - name: Import distribution certificate
+        uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7
+        with:
+          p12-file-base64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+          p12-password: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+
+      # Fetched fresh from Apple every build, so a regenerated profile (after an
+      # App ID capability change) needs no secret update here.
+      - name: Download provisioning profile
+        uses: apple-actions/download-provisioning-profiles@2126b5f86a0e2863cbf4d2d312112b22b943a594 # v6
+        with:
+          bundle-id: com.nic.lgpower
+          profile-type: IOS_APP_STORE
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+      - name: Build signed ipa
+        run: |
+          flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+          echo "IPA=$(ls build/ios/ipa/*.ipa)" >> "$GITHUB_ENV"
+
+      - name: Keep the ipa as a run artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lgpower-${{ github.ref_name }}-ios
+          path: build/ios/ipa/*.ipa
+
+      # Only when a tag is pushed: Apple refuses a build number it has seen before,
+      # so a dispatch run must not consume one.
+      - name: Upload to TestFlight
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: apple-actions/upload-testflight-build@5e75ff58276689011512ba87a381d93dc67dbcf8 # v5.3.0
+        with:
+          app-path: ${{ env.IPA }}
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
