@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../../../core/haptics.dart';
 import '../../../net/pointer_session.dart';
 import '../../../net/webos_client.dart';
 import '../../../theme/color_util.dart';
@@ -58,7 +58,7 @@ class TouchpadController extends ChangeNotifier {
   }
 
   void onButtonDown(Offset globalCenter, Offset globalPointer) {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     active = true;
     isLocked = false;
     _hasMoved = false;
@@ -80,7 +80,7 @@ class TouchpadController extends ChangeNotifier {
   void _onLockTimeout() {
     if (_hasMoved || !active) return;
     isLocked = true;
-    HapticFeedback.heavyImpact();
+    Haptics.heavy();
     notifyListeners();
   }
 
@@ -97,7 +97,7 @@ class TouchpadController extends ChangeNotifier {
     _lastGlobal = globalPointer;
     _moveAccumulator += math.sqrt(dx * dx + dy * dy);
     if (_moveAccumulator >= _hapticMovePx) {
-      HapticFeedback.selectionClick();
+      Haptics.selection();
       _moveAccumulator = 0;
     }
     _session?.move(dx, dy);
@@ -188,7 +188,7 @@ class TouchpadController extends ChangeNotifier {
     _pointers.remove(id);
     if (_pointers.isEmpty) {
       if (wasSingle && !_overlayDragging && !_scrolling) {
-        HapticFeedback.lightImpact();
+        Haptics.light();
         _session?.click();
       }
       _scrolling = false;
@@ -202,12 +202,12 @@ class TouchpadController extends ChangeNotifier {
   }
 
   void overlayBack() {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     _session?.sendKey('BACK');
   }
 
   void overlayClick() {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     _session?.click();
   }
 

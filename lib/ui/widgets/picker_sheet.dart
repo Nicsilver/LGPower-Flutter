@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../../core/haptics.dart';
 import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
 import 'section.dart';
@@ -77,9 +77,9 @@ Future<void> showPickerSheet(
                               ? null
                               : () {
                                   // Flutter has no equivalent of Android's
-                                  // HapticFeedbackConstants.LONG_PRESS; heavyImpact
+                                  // HapticFeedbackConstants.LONG_PRESS; heavy
                                   // is the closest built-in analog.
-                                  HapticFeedback.heavyImpact();
+                                  Haptics.heavy();
                                   Navigator.of(sheetContext).pop();
                                   onLongPress(rows[i].$1);
                                 },

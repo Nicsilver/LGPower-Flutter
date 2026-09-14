@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/prefs.dart';
+import '../../net/ir.dart';
 import '../../theme/release_notes.dart';
 import '../widgets/release_notes_dialog.dart';
 
@@ -20,7 +21,10 @@ Future<void> maybeShowWhatsNew(BuildContext context, [Prefs? prefs]) async {
   final lastSeen = resolvedPrefs.lastSeenVersion;
   if (lastSeen >= versionCode) return;
 
-  final releases = lastSeen < 0 ? ReleaseNotes.all.take(1).toList() : ReleaseNotes.since(lastSeen);
+  final releases = ReleaseNotes.forDevice(
+    lastSeen < 0 ? ReleaseNotes.all.take(1).toList() : ReleaseNotes.since(lastSeen),
+    hasIr: await Ir.hasEmitter(),
+  );
   if (releases.isEmpty) return;
   if (!context.mounted) return;
 

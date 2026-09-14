@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 
+import '../../core/haptics.dart';
 import '../../core/prefs.dart';
 import '../../core/right_pill.dart';
 import '../../core/tv_store.dart';
@@ -238,7 +238,7 @@ class RemoteController extends ChangeNotifier {
   // ---------------------------------------------------------------------
 
   Future<void> sendCommand(Future<Result> Function() block) async {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     final result = await block();
     _handleResult(result);
   }
@@ -266,7 +266,7 @@ class RemoteController extends ChangeNotifier {
   // ---------------------------------------------------------------------
 
   Future<void> tapPower() async {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     final gen = ++_wakeGen;
     final presence = await client.awaitPresence(3000);
     final isOn = presence is PresenceReported && presence.isOn;
@@ -278,7 +278,7 @@ class RemoteController extends ChangeNotifier {
   }
 
   Future<void> launchShortcut(TvApp app) async {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     final gen = ++_wakeGen;
     final presence = await client.awaitPresence(3000);
     final isOn = presence is PresenceReported && presence.isOn;
@@ -315,7 +315,7 @@ class RemoteController extends ChangeNotifier {
   // ---------------------------------------------------------------------
 
   Future<void> toggleMute() async {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     setVolumeState(currentVolume ?? 0, !currentMuted);
     final result = await client.pressKey('MUTE');
     _handleResult(result);
@@ -324,7 +324,7 @@ class RemoteController extends ChangeNotifier {
 
   Future<void> tapScreenOff() async {
     if (currentScreenOff) return;
-    HapticFeedback.lightImpact();
+    Haptics.light();
     currentScreenOff = true;
     _notify();
     final result = await client.turnOffScreen();

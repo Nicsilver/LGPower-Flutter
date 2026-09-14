@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../../../core/haptics.dart';
 import '../../../theme/theme_manager.dart';
 import '../../widgets/app_icon.dart';
 import '../dims.dart';
@@ -258,7 +258,7 @@ class _NumpadPageState extends State<NumpadPage> with SingleTickerProviderStateM
             labelColor: theme.secondaryText,
             semanticLabel: 'Back to Remote',
             onTap: () {
-              HapticFeedback.lightImpact();
+              Haptics.light();
               widget.onClose();
             },
             child: AppIcon('ic_remote', size: 24, color: theme.circleBtnIconTint),

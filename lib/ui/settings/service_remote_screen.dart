@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../../core/haptics.dart';
 import '../../net/ir.dart';
 import '../../theme/color_util.dart';
 import '../../theme/theme_config.dart';
@@ -74,7 +74,7 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
   }
 
   Future<void> _sendIr(int cmd) async {
-    HapticFeedback.selectionClick();
+    Haptics.selection();
     if (!await widget.hasEmitter()) {
       if (mounted) showToast(context, 'No IR blaster on this phone');
       return;
@@ -83,7 +83,7 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
   }
 
   void _confirmTile(String title, int cmd, String body) {
-    HapticFeedback.selectionClick();
+    Haptics.selection();
     unawaited(showWarningSheet(
       context,
       chip: 'CONFIRM',

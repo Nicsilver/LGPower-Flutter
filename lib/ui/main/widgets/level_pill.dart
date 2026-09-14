@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../../../core/haptics.dart';
 import '../../../theme/theme_manager.dart';
 import '../../widgets/app_icon.dart';
 import 'fill_viewport_page.dart';
@@ -121,7 +121,7 @@ class _LevelPillState extends State<LevelPill> {
       _cancelTimers();
       _initialDelay = Timer(const Duration(milliseconds: 400), () {
         _repeat = Timer.periodic(const Duration(milliseconds: 120), (_) {
-          HapticFeedback.selectionClick();
+          Haptics.selection();
           _fireHalf(_repeatIsUp);
         });
       });
@@ -142,7 +142,7 @@ class _LevelPillState extends State<LevelPill> {
       final level = _levelFromY(y);
       widget.onDragMove?.call(level);
       if (_lastHapticLevel == -1 || (level - _lastHapticLevel).abs() >= 3) {
-        HapticFeedback.selectionClick();
+        Haptics.selection();
         _lastHapticLevel = level;
       }
     }
@@ -155,7 +155,7 @@ class _LevelPillState extends State<LevelPill> {
       _showTop = false;
       _showBottom = false;
     });
-    HapticFeedback.lightImpact();
+    Haptics.light();
     final y = event.localPosition.dy;
     final isTop = y < widget.height / 2;
     if (widget.channelMode) {

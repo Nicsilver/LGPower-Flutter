@@ -18,8 +18,28 @@ class ReleaseNotes {
   static List<Release> since(int lastSeenCode) =>
       all.where((r) => r.code > lastSeenCode).toList();
 
+  /// Notes that mention IR only make sense on a phone with a blaster. On any
+  /// other phone the feature does not exist, so its history is dropped too
+  /// (and a release left with no notes disappears with it).
+  static List<Release> forDevice(List<Release> releases, {required bool hasIr}) {
+    if (hasIr) return releases;
+    return [
+      for (final r in releases)
+        if (r.notes.any(_isNotIr))
+          Release(r.code, r.name, r.date, r.notes.where(_isNotIr).toList()),
+    ];
+  }
+
+  static final RegExp _irWord = RegExp(r'\bIR\b');
+
+  static bool _isNotIr(String note) => !_irWord.hasMatch(note);
+
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(43, '1.37.0', '2026-09-15', [
+      'Haptic ticks on iPhone',
+      'The tour ends back on the remote',
+    ]),
     Release(41, '1.36.1', '2026-09-13', [
       "The after-wake picker lists the TV's inputs even while the TV is off, from the last connection",
     ]),

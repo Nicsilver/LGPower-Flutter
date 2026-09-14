@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/haptics.dart';
 import '../../core/right_pill.dart';
 import '../../core/tv_store.dart';
 import '../../core/wake_action.dart';
@@ -80,7 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // Let the enter transition settle so the highlight lands on laid-out cards
     await Future<void>.delayed(const Duration(milliseconds: 450));
     if (!mounted) return;
-    await showSpotlightTour(context, [
+    final completed = await showSpotlightTour(context, [
       TourStep(
         [_tvsGroupKey],
         'Saved TVs',
@@ -98,6 +98,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'Pick a theme, or create your own with a few colours.',
       ),
     ]);
+    // The tour started on the remote, so Done lands back there
+    if (completed && mounted) Navigator.of(context).pop();
   }
 
   Future<void> _loadVersion() async {
@@ -385,7 +387,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showReleaseNotesDialog(
       context,
       title: 'Release notes',
-      releases: ReleaseNotes.all,
+      releases: ReleaseNotes.forDevice(ReleaseNotes.all, hasIr: _hasIrEmitter),
       buttonLabel: 'Close',
       markLatest: true,
     );
@@ -654,7 +656,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return LongPressDraggable<int>(
       data: displayIndex,
-      onDragStarted: HapticFeedback.heavyImpact,
+      onDragStarted: Haptics.heavy,
       feedback: Transform.scale(
         scale: 1.12,
         child: Opacity(

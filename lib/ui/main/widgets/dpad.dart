@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../../../core/haptics.dart';
 import '../../../theme/theme_manager.dart';
 import '../../widgets/app_icon.dart';
 import '../remote_controller.dart';
@@ -46,7 +46,7 @@ class _DpadState extends State<Dpad> {
     _cancelTimers();
     _initialDelay = Timer(const Duration(milliseconds: 400), () {
       _repeat = Timer.periodic(const Duration(milliseconds: 120), (_) {
-        HapticFeedback.selectionClick();
+        Haptics.selection();
         unawaited(widget.controller.client.pressKey(keyCode));
       });
     });

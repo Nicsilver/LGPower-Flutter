@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../core/haptics.dart';
 import '../../core/prefs.dart';
 import '../../core/right_pill.dart';
 import '../../core/tv_store.dart';
@@ -86,6 +87,8 @@ class _MainScreenState extends State<MainScreen>
   bool _slideRowJustDismissed = false;
   bool _hardwareKeysHooked = false;
   bool _tourRunning = false;
+  // Resolved once at bootstrap; without a blaster nothing in the UI mentions IR
+  bool _hasIrEmitter = false;
 
   @override
   void initState() {
@@ -103,6 +106,7 @@ class _MainScreenState extends State<MainScreen>
     await Future<void>.value();
     final prefs = widget.prefs ?? await Prefs.load();
     final client = widget.client ?? WebOsClient(prefs);
+    final hasIrEmitter = await Ir.hasEmitter();
     if (!mounted) return;
     final controller = RemoteController(client: client, prefs: prefs);
     final touchpad = TouchpadController(
@@ -115,6 +119,7 @@ class _MainScreenState extends State<MainScreen>
     });
     setState(() {
       _controllerOrNull = controller;
+      _hasIrEmitter = hasIrEmitter;
       _touchpadOrNull = touchpad;
     });
     unawaited(controller.onResume());
@@ -204,7 +209,7 @@ class _MainScreenState extends State<MainScreen>
     TourStep(
       [_gearKey],
       'Settings',
-      'Shortcuts, themes and the rest live behind the gear. The tour ends in there.',
+      'Shortcuts, themes and the rest live behind the gear. The tour continues in there.',
     ),
     TourStep(
       [_shortcutsKey],
@@ -214,8 +219,11 @@ class _MainScreenState extends State<MainScreen>
     TourStep(
       [_powerKey, _statusDotKey],
       'Power',
-      "Turns the TV on from standby over the network, or with the phone's IR blaster if it has one. "
-          'The dot in the corner shows whether the TV is on.',
+      _hasIrEmitter
+          ? "Turns the TV on from standby over the network, or with the phone's IR blaster. "
+                'The dot in the corner shows whether the TV is on.'
+          : 'Turns the TV on from standby over the network. '
+                'The dot in the corner shows whether the TV is on.',
     ),
     TourStep(
       [_touchpadKey],
@@ -306,7 +314,7 @@ class _MainScreenState extends State<MainScreen>
   }
 
   void _openSlideRow(_SlideRow row) {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     if (!_slideRowJustDismissed) {
       setState(() => _slideRow = row);
     }
@@ -330,7 +338,7 @@ class _MainScreenState extends State<MainScreen>
   }
 
   Future<void> _openInputPicker() async {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     final (inputs, error) = await _controller.client.getInputs();
     if (!mounted) return;
     if (error != null || inputs.isEmpty) {
@@ -348,7 +356,7 @@ class _MainScreenState extends State<MainScreen>
   }
 
   Future<void> _openPicturePicker() async {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     final current = await _controller.client.getCurrentPictureMode();
     if (!mounted) return;
     await showPickerSheet(
@@ -365,7 +373,7 @@ class _MainScreenState extends State<MainScreen>
   }
 
   Future<void> _openSoundPicker() async {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     final current = await _controller.client.getSoundMode();
     if (!mounted) return;
     await showPickerSheet(
@@ -388,7 +396,7 @@ class _MainScreenState extends State<MainScreen>
   static const _addTvId = '__add';
 
   Future<void> _openTvPicker() async {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     final prefs = _controller.prefs;
     final tvs = TvStore.list(prefs);
     final activeId = TvStore.activeId(prefs);
@@ -684,7 +692,7 @@ class _MainScreenState extends State<MainScreen>
           labelTopMargin: 5,
           semanticLabel: 'Power',
           onTap: () => unawaited(_controller.tapPower()),
-          onLongPress: _onPowerLongPress,
+          onLongPress: _hasIrEmitter ? _onPowerLongPress : null,
           child: const AppIcon('ic_power', size: 24),
         ),
         const SizedBox(width: 28),
@@ -709,7 +717,7 @@ class _MainScreenState extends State<MainScreen>
           labelTopMargin: 5,
           semanticLabel: 'Keyboard',
           onTap: () {
-            HapticFeedback.lightImpact();
+            Haptics.light();
             unawaited(showKeyboardSheet(context, _controller));
           },
           child: AppIcon(
@@ -722,17 +730,9 @@ class _MainScreenState extends State<MainScreen>
     );
   }
 
-  // The haptic always fires (matches the platform's own long-press feedback
-  // on Android); only the actual IR send is conditional on hardware.
   void _onPowerLongPress() {
-    HapticFeedback.heavyImpact();
-    unawaited(_transmitPowerIr());
-  }
-
-  Future<void> _transmitPowerIr() async {
-    if (await Ir.hasEmitter()) {
-      await Ir.transmit(38000, Ir.necPattern(Ir.lgPowerCode));
-    }
+    Haptics.heavy();
+    unawaited(Ir.transmit(38000, Ir.necPattern(Ir.lgPowerCode)));
   }
 
   Widget _iconCell({
@@ -1044,7 +1044,7 @@ class _MainScreenState extends State<MainScreen>
       labelTopMargin: 5,
       semanticLabel: 'Numpad',
       onTap: () {
-        HapticFeedback.lightImpact();
+        Haptics.light();
         setState(() => _numpadOpen = true);
       },
       child: Text(

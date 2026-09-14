@@ -407,11 +407,25 @@ void main() {
   group('ReleaseNotes.since', () {
     test('32 returns exactly 33 through 41 (newest first)', () {
       final releases = ReleaseNotes.since(32);
-      expect(releases.map((r) => r.code).toList(), [41, 40, 39, 38, 37, 36, 35, 34, 33]);
+      expect(releases.map((r) => r.code).toList(), [43, 41, 40, 39, 38, 37, 36, 35, 34, 33]);
+    });
+
+    test('forDevice drops IR notes, and releases left empty, without a blaster', () {
+      final withIr = ReleaseNotes.forDevice(ReleaseNotes.all, hasIr: true);
+      expect(withIr, same(ReleaseNotes.all));
+
+      final withoutIr = ReleaseNotes.forDevice(ReleaseNotes.all, hasIr: false);
+      final irWord = RegExp(r'\bIR\b');
+      expect(withoutIr.expand((r) => r.notes).where(irWord.hasMatch), isEmpty);
+      expect(withoutIr.every((r) => r.notes.isNotEmpty), isTrue);
+      // 1.27.0's only note is the IR service remote
+      expect(withoutIr.map((r) => r.code), isNot(contains(27)));
+      expect(withoutIr.map((r) => r.code), contains(33));
+      expect(withoutIr.length, ReleaseNotes.all.length - 1);
     });
 
     test('all has no gaps below 1.22.0 and is sorted newest-first', () {
-      expect(ReleaseNotes.all.length, 42);
+      expect(ReleaseNotes.all.length, 43);
       for (var i = 1; i < ReleaseNotes.all.length; i++) {
         expect(ReleaseNotes.all[i].code, lessThanOrEqualTo(ReleaseNotes.all[i - 1].code));
       }
