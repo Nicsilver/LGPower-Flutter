@@ -36,6 +36,9 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(44, '1.38.0', '2026-09-18', [
+      "Power: when the TV doesn't answer a wake, a hint names the two TV settings it needs",
+    ]),
     Release(43, '1.37.0', '2026-09-15', [
       'Haptic ticks on iPhone',
       'The tour ends back on the remote',

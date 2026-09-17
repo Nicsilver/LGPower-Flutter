@@ -82,6 +82,8 @@ class _MainScreenState extends State<MainScreen>
   bool get _ready => _controllerOrNull != null;
 
   StreamSubscription<ToastMessage>? _toastSub;
+  StreamSubscription<bool>? _wakeHintSub;
+  bool _wakeHintShowing = false;
   bool _numpadOpen = false;
   _SlideRow _slideRow = _SlideRow.none;
   bool _slideRowJustDismissed = false;
@@ -116,6 +118,14 @@ class _MainScreenState extends State<MainScreen>
     );
     _toastSub = controller.toasts.listen((m) {
       if (mounted) showToast(context, m.text, long: m.long);
+    });
+    _wakeHintSub = controller.wakeHints.listen((show) {
+      if (!mounted) return;
+      if (show) {
+        unawaited(_showWakeHint());
+      } else if (_wakeHintShowing) {
+        Navigator.of(context).pop();
+      }
     });
     setState(() {
       _controllerOrNull = controller;
@@ -190,6 +200,7 @@ class _MainScreenState extends State<MainScreen>
       HardwareKeyboard.instance.removeHandler(_onHardwareKey);
     }
     _toastSub?.cancel();
+    _wakeHintSub?.cancel();
     _controllerOrNull?.dispose();
     _touchpadOrNull?.dispose();
     unawaited(WakelockPlus.disable());
@@ -733,6 +744,30 @@ class _MainScreenState extends State<MainScreen>
   void _onPowerLongPress() {
     Haptics.heavy();
     unawaited(Ir.transmit(38000, Ir.necPattern(Ir.lgPowerCode)));
+  }
+
+  /// Requested by the controller once a wake has gone unanswered for a while;
+  /// popped again from the same stream if the TV answers after all.
+  Future<void> _showWakeHint() async {
+    if (_wakeHintShowing) return;
+    _wakeHintShowing = true;
+    final body = "The TV hasn't answered yet. If it is still dark, check these two settings on the TV:"
+        '\n\n• Turn on via Wi-Fi (TV On With Mobile): Settings › General › Devices › External Devices. '
+        'On 2025 and newer sets it is Support › IP control settings › Wake on LAN.'
+        '\n\n• Quick Start+ (Always Ready on 2022 and newer sets): Settings › General. '
+        "Without it the TV's network goes to sleep a few minutes after switching off, so waking only works right after."
+        '${_hasIrEmitter ? '\n\nThis phone has an infrared blaster: hold Power to turn the TV on with that instead.' : ''}';
+    try {
+      await showWarningSheet(
+        context,
+        chip: 'NO ANSWER FROM TV',
+        title: 'Is the TV not turning on?',
+        body: body,
+        button: 'Got it',
+      );
+    } finally {
+      _wakeHintShowing = false;
+    }
   }
 
   Widget _iconCell({

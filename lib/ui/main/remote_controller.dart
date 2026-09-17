@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
@@ -68,6 +69,16 @@ class RemoteController extends ChangeNotifier {
 
   final _toastController = StreamController<ToastMessage>.broadcast();
   Stream<ToastMessage> get toasts => _toastController.stream;
+
+  /// `true` = show the "Is the TV not turning on?" hint, `false` = the TV
+  /// answered after all, take it down again.
+  final _wakeHintController = StreamController<bool>.broadcast();
+  Stream<bool> get wakeHints => _wakeHintController.stream;
+
+  static const wakeRetries = 25;
+  static const wakeHintFirstS = 10;
+  static const wakeHintStepS = 5;
+  static const wakeHintMaxS = 60;
 
   bool _disposed = false;
 
@@ -140,6 +151,7 @@ class RemoteController extends ChangeNotifier {
     _volumeSendTimer?.cancel();
     _brightnessSendTimer?.cancel();
     _toastController.close();
+    _wakeHintController.close();
     super.dispose();
   }
 
@@ -289,13 +301,23 @@ class RemoteController extends ChangeNotifier {
     }
   }
 
-  /// WoL once, then up to 25 one-second-apart attempts of [action], each
-  /// fired on its own (unawaited) future; the first `Success` bumps the
-  /// generation (which halts the loop) and forces the screen on.
+  /// WoL once, then one-second-apart attempts of [action], each fired on its
+  /// own (unawaited) future; the first `Success` bumps the generation (which
+  /// halts the loop) and forces the screen on. Every "the power button doesn't
+  /// turn the TV on" report so far was one of two TV settings, so once the TV
+  /// has stayed silent for [Prefs.wakeHintAfterS] the hint is requested; each
+  /// showing pushes that wait 5 s further (up to a minute) so a TV that is
+  /// merely slow to boot doesn't keep triggering it.
   Future<void> _wakeTv(int gen, Future<Result> Function() action) async {
     await client.sendWakeOnLan();
-    for (var i = 0; i < 25; i++) {
+    final hintAfter = prefs.wakeHintAfterS;
+    final rounds = max(wakeRetries, hintAfter + 1);
+    for (var i = 0; i < rounds; i++) {
       if (_wakeGen != gen) return;
+      if (i == hintAfter) {
+        unawaited(prefs.setWakeHintAfterS(min(hintAfter + wakeHintStepS, wakeHintMaxS)));
+        if (!_disposed) _wakeHintController.add(true);
+      }
       unawaited(_attemptWake(gen, action));
       await Future.delayed(const Duration(seconds: 1));
     }
@@ -306,6 +328,7 @@ class RemoteController extends ChangeNotifier {
     final result = await action();
     if (result is Success) {
       _wakeGen++;
+      if (!_disposed) _wakeHintController.add(false);
       await client.turnOnScreen();
     }
   }

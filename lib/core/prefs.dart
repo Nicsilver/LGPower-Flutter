@@ -65,6 +65,11 @@ class Prefs {
   Future<void> setLastBrightness(int value) =>
       _sp.setInt('last_brightness', value);
 
+  /// Seconds a wake attempt may stay unanswered before the TV-settings hint
+  /// shows. Grows each time the hint is shown (see RemoteController).
+  int get wakeHintAfterS => _sp.getInt('wake_hint_after_s') ?? 10;
+  Future<void> setWakeHintAfterS(int value) => _sp.setInt('wake_hint_after_s', value);
+
   int get lastSeenVersion => _sp.getInt('last_seen_version') ?? -1;
   Future<void> setLastSeenVersion(int value) =>
       _sp.setInt('last_seen_version', value);
