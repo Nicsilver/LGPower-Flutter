@@ -61,6 +61,11 @@ class RemoteController extends ChangeNotifier {
   int _volumeDragLevel = -1;
   int _volumeSentLevel = -1;
   bool _volumeSending = false;
+  // With a receiver on ARC the drag is replayed as volume key presses, one
+  // step per level, and the loop keeps going after release until it has
+  // caught up.
+  bool _volumeStepping = false;
+  bool _volumeDragging = false;
 
   Timer? _brightnessSendTimer;
   int _brightnessDragLevel = -1;
@@ -366,7 +371,7 @@ class RemoteController extends ChangeNotifier {
     _notify();
   }
 
-  /// Phone hardware volume keys (Android only, spec §6): unlike the pill's
+  /// Phone hardware volume keys (spec §6): unlike the pill's
   /// own tap-up/down these go through [sendCommand] so a failure toasts.
   Future<void> hardwareVolumeUp() async {
     setVolumeState(((currentVolume ?? 0) + 1).clamp(0, 100), currentMuted);
@@ -403,30 +408,61 @@ class RemoteController extends ChangeNotifier {
     // bar/label read straight off currentVolume, so without this the UI sat
     // frozen until the drag ended even though the TV was already being sent
     // intermediate levels.
+    if (!_volumeDragging) {
+      _volumeDragging = true;
+      if (_volumeSendTimer == null) {
+        _volumeStepping = client.volumeNeedsKeys;
+        if (_volumeStepping) _volumeSentLevel = currentVolume ?? level;
+      }
+    }
     currentVolume = level;
     _notify();
     _volumeDragLevel = level;
-    _volumeSendTimer ??= Timer.periodic(const Duration(milliseconds: 50), (_) {
+    _startVolumeSendLoop();
+  }
+
+  void _startVolumeSendLoop() {
+    _volumeSendTimer ??= Timer.periodic(
+        Duration(milliseconds: _volumeStepping ? 80 : 50), (_) {
       unawaited(_volumeSendTick());
     });
   }
 
   Future<void> _volumeSendTick() async {
+    if (_volumeStepping && !_volumeDragging &&
+        _volumeDragLevel == _volumeSentLevel && !_volumeSending) {
+      _volumeSendTimer?.cancel();
+      _volumeSendTimer = null;
+      _scheduleVolumeRefresh(const Duration(milliseconds: 200));
+      return;
+    }
     if (_volumeDragLevel == _volumeSentLevel || _volumeSending) return;
     _volumeSending = true;
-    final level = _volumeDragLevel;
-    _volumeSentLevel = level;
     try {
-      await client.setVolume(level);
+      if (_volumeStepping) {
+        final up = _volumeDragLevel > _volumeSentLevel;
+        _volumeSentLevel += up ? 1 : -1;
+        await (up ? client.volumeUp() : client.volumeDown());
+      } else {
+        final level = _volumeDragLevel;
+        _volumeSentLevel = level;
+        await client.setVolume(level);
+      }
     } finally {
       _volumeSending = false;
     }
   }
 
   void volumeDragEnd(int level) {
+    _volumeDragging = false;
+    setVolumeState(level, currentMuted);
+    if (_volumeStepping) {
+      _volumeDragLevel = level;
+      _startVolumeSendLoop();
+      return;
+    }
     _volumeSendTimer?.cancel();
     _volumeSendTimer = null;
-    setVolumeState(level, currentMuted);
     unawaited(() async {
       // A send from the drag loop may still be in flight; if it lands after
       // this one the TV ends up at the older level, so wait it out first.

@@ -3,13 +3,13 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/haptics.dart';
 import '../../core/prefs.dart';
 import '../../core/right_pill.dart';
 import '../../core/tv_store.dart';
+import '../../core/volume_buttons.dart';
 import '../../net/ir.dart';
 import '../../net/webos_client.dart';
 import '../../theme/theme_config.dart';
@@ -134,9 +134,11 @@ class _MainScreenState extends State<MainScreen>
     });
     unawaited(controller.onResume());
     unawaited(_syncWakelock());
-    // Android only -- iOS has no way to intercept the hardware volume keys.
-    if (!kIsWeb && Platform.isAndroid) {
-      HardwareKeyboard.instance.addHandler(_onHardwareKey);
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      VolumeButtons.start(
+        onUp: () => unawaited(controller.hardwareVolumeUp()),
+        onDown: () => unawaited(controller.hardwareVolumeDown()),
+      );
       _hardwareKeysHooked = true;
     }
     // Fire-and-forget, same as onCreate's non-blocking dialog on Android --
@@ -179,26 +181,11 @@ class _MainScreenState extends State<MainScreen>
     }
   }
 
-  bool _onHardwareKey(KeyEvent event) {
-    if (!_ready) return false;
-    if (event is! KeyDownEvent) return false;
-    if (event.logicalKey == LogicalKeyboardKey.audioVolumeUp) {
-      unawaited(_controller.hardwareVolumeUp());
-      return true;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.audioVolumeDown) {
-      unawaited(_controller.hardwareVolumeDown());
-      return true;
-    }
-    return false;
-  }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    if (_hardwareKeysHooked) {
-      HardwareKeyboard.instance.removeHandler(_onHardwareKey);
-    }
+    if (_hardwareKeysHooked) VolumeButtons.stop();
     _toastSub?.cancel();
     _wakeHintSub?.cancel();
     _controllerOrNull?.dispose();

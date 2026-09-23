@@ -266,10 +266,26 @@ class WebOsClient {
     return _parseVolume(reply.payload);
   }
 
+  // An AV receiver or soundbar on ARC/optical often ignores setVolume (the TV
+  // only relays volume keys to it over CEC), so callers step with the keys.
+  bool volumeNeedsKeys = false;
+
+  static const Set<String> _tvOwnOutputs = {
+    'tv_speaker', 'tv_external_speaker', 'headphone', 'tv_speaker_headphone',
+  };
+
+  void _noteSoundOutput(Map<String, dynamic>? status) {
+    if (status == null) return;
+    final output = status['soundOutput'] as String? ?? '';
+    volumeNeedsKeys = status['adjustVolume'] == false ||
+        (output.isNotEmpty && !_tvOwnOutputs.contains(output));
+  }
+
   // Firmware answers with either shape; a volume below 0 (or absent) means
   // "no reading" so the caller can keep the previous value.
   VolumeState? _parseVolume(Map<String, dynamic> payload) {
     final nested = payload['volumeStatus'] as Map<String, dynamic>?;
+    _noteSoundOutput(nested);
     final src = nested ?? payload;
     final rawVol = src['volume'];
     final vol = rawVol is int ? rawVol : int.tryParse('$rawVol') ?? -1;
