@@ -36,6 +36,10 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(45, '1.39.0', '2026-09-23', [
+      "Phone volume buttons change the TV's volume while the remote is open",
+      'Volume slider works with a receiver or soundbar on HDMI ARC or optical, by stepping the volume keys',
+    ]),
     Release(44, '1.38.0', '2026-09-18', [
       "Power: when the TV doesn't answer a wake, a hint names the two TV settings it needs",
     ]),
