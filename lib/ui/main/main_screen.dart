@@ -421,7 +421,7 @@ class _MainScreenState extends State<MainScreen>
   Future<void> _addTv() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => SetupScreen(client: _controller.client, addMode: true),
+        builder: (_) => SetupScreen(client: _controller.client, addMode: true, backLabel: 'Remote'),
       ),
     );
     await _afterReturn();

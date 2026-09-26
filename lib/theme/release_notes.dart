@@ -36,6 +36,10 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(46, '1.40.0', '2026-09-26', [
+      'Back button at the top of Settings on iPhone',
+      'Power wakes TVs on a network cable too: both the Wi-Fi and the wired address get the wake signal',
+    ]),
     Release(45, '1.39.0', '2026-09-23', [
       "Phone volume buttons change the TV's volume while the remote is open",
       'Volume slider works with a receiver or soundbar on HDMI ARC or optical, by stepping the volume keys',

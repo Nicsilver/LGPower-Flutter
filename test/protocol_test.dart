@@ -47,6 +47,14 @@ void main() {
       expect(prefs.clientKey, isNotNull);
       expect(prefs.clientKey, isNotEmpty);
     });
+
+    test('keeps both the Wi-Fi and the wired MAC', () async {
+      final prefs = await _freshPrefs();
+      final client = WebOsClient(prefs);
+      addTearDown(client.resetConnection);
+
+      expect(macList((await client.getMacFromDevice())!), hasLength(2));
+    });
   });
 
   group('volume', () {

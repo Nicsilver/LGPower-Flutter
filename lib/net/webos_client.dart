@@ -513,7 +513,8 @@ class WebOsClient {
     final reply = await _commandSession()
         .send('ssap://com.webos.service.connectionmanager/getinfo', timeoutSecs: 8);
     if (reply is! CmdReplyOk) return null;
-    return extractMacAddress(reply.payload);
+    final macs = extractMacAddresses(reply.payload);
+    return macs.isEmpty ? null : macs.join(', ');
   }
 
   Future<void> sendWakeOnLan() => wol.sendWakeOnLan(tvMac, tvIp: tvIp);
