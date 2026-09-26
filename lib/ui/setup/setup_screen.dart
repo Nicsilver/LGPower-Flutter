@@ -10,6 +10,7 @@ import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
 import '../main/main_screen.dart';
 import '../widgets/buttons.dart';
+import '../widgets/ios_back_button.dart';
 import '../widgets/section.dart';
 
 enum _Screen { searching, list, pairing }
@@ -27,6 +28,7 @@ class SetupScreen extends StatefulWidget {
     this.pairingWatch,
     this.addMode = false,
     this.fingerprint = fingerprintTv,
+    this.backLabel = 'Back',
   });
 
   final WebOsClient client;
@@ -44,6 +46,9 @@ class SetupScreen extends StatefulWidget {
 
   /// Unicast SSDP lookup for TVs typed in by hand; injectable for tests.
   final Future<String?> Function(String ip) fingerprint;
+
+  /// Names the screen underneath on the iPhone back button (add mode only).
+  final String backLabel;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -212,14 +217,27 @@ class _SetupScreenState extends State<SetupScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = AppTheme.of(context);
+    final backButton = IosBackButton.visible(context);
     return Scaffold(
       backgroundColor: theme.windowBg,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 72, 20, 40),
+          padding: EdgeInsets.fromLTRB(20, backButton ? 4 : 72, 20, 40),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              if (backButton) ...[
+                // This screen's side padding is 4 wider than Settings', so shift the
+                // chevron to line up with the other screens' back buttons
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Transform.translate(
+                    offset: const Offset(-4, 0),
+                    child: IosBackButton(widget.backLabel),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
               Text(
                 'LG Power',
                 style: TextStyle(

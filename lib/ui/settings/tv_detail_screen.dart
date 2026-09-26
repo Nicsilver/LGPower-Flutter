@@ -8,6 +8,7 @@ import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
 import '../widgets/buttons.dart';
 import '../widgets/edit_row.dart';
+import '../widgets/ios_back_button.dart';
 import '../widgets/section.dart';
 import '../widgets/warning_sheet.dart';
 
@@ -108,10 +109,11 @@ class _TvDetailScreenState extends State<TvDetailScreen> {
         backgroundColor: theme.windowBg,
         body: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 56),
+            padding: EdgeInsets.fromLTRB(16, IosBackButton.visible(context) ? 4 : 20, 16, 56),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const IosBackButton('Settings'),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: Text(
@@ -192,7 +194,7 @@ class _TvDetailScreenState extends State<TvDetailScreen> {
   }
 
   static const _macHint =
-      'Filled in when the TV was paired. The MAC address is what wakes the TV from standby. '
+      'Filled in when the TV was paired: one address for Wi-Fi, one for the network cable. These are what wake the TV from standby. '
       'On the TV, enable Turn on via Wi-Fi (Settings › General › Devices › External Devices › '
       'TV On With Mobile; on 2025 and newer sets Support › IP control settings › Wake on LAN). '
       'If waking only works for a few minutes after switching off, also enable Quick Start+ '

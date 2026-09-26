@@ -12,9 +12,9 @@ import 'dart:typed_data';
 /// makes the unicast copy deliverable. No SecureOn password; every failure is
 /// swallowed -- a wake attempt that can't even send is not worth surfacing
 /// as an error to the user.
-Future<void> sendWakeOnLan(String mac, {String tvIp = ''}) async {
-  final packet = buildMagicPacket(mac);
-  if (packet == null) return;
+Future<void> sendWakeOnLan(String macs, {String tvIp = ''}) async {
+  final packets = macList(macs).map(buildMagicPacket).whereType<Uint8List>().toList();
+  if (packets.isEmpty) return;
   RawDatagramSocket? socket;
   try {
     socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
@@ -24,16 +24,18 @@ Future<void> sendWakeOnLan(String mac, {String tvIp = ''}) async {
       if (burst > 0) {
         await Future<void>.delayed(const Duration(milliseconds: 300));
       }
-      try {
-        socket.broadcastEnabled = true;
-        socket.send(packet, InternetAddress('255.255.255.255'), 9);
-        if (directed != null) socket.send(packet, directed, 9);
-      } catch (_) {
-        // Not entitled to broadcast (iOS); the unicast copies still go out.
-      }
-      if (unicast != null) {
-        socket.send(packet, unicast, 9);
-        socket.send(packet, unicast, 7);
+      for (final packet in packets) {
+        try {
+          socket.broadcastEnabled = true;
+          socket.send(packet, InternetAddress('255.255.255.255'), 9);
+          if (directed != null) socket.send(packet, directed, 9);
+        } catch (_) {
+          // Not entitled to broadcast (iOS); the unicast copies still go out.
+        }
+        if (unicast != null) {
+          socket.send(packet, unicast, 9);
+          socket.send(packet, unicast, 7);
+        }
       }
     }
   } catch (_) {
@@ -48,6 +50,13 @@ InternetAddress? _directedBroadcast(String tvIp) {
   if (parts.length != 4) return null;
   return InternetAddress.tryParse('${parts[0]}.${parts[1]}.${parts[2]}.255');
 }
+
+/// The `tv_mac` pref holds a comma-separated list (Wi-Fi and wired MAC).
+List<String> macList(String value) => value
+    .split(RegExp(r'[,; ]'))
+    .map((m) => m.trim())
+    .where((m) => m.isNotEmpty)
+    .toList();
 
 /// 102 bytes: six 0xFF bytes followed by the 6-byte MAC repeated 16 times.
 /// Returns null for an empty MAC or one that isn't 6 colon-separated hex

@@ -292,4 +292,48 @@ void main() {
       expect(find.byType(SettingsScreen), findsNothing);
     });
   });
+
+  group('back button', () {
+    Future<void> openSettings(WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final (_, client, controller) = await _harness();
+      await tester.pumpWidget(
+        AppTheme(
+          controller: controller,
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => SettingsScreen(client: client)),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+      'iPhone gets a "‹ Remote" button that goes back',
+      (tester) async {
+        await openSettings(tester);
+        await tester.tap(find.text('Remote'));
+        await tester.pumpAndSettle();
+        expect(find.byType(SettingsScreen), findsNothing);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets(
+      'Android relies on its system back instead',
+      (tester) async {
+        await openSettings(tester);
+        expect(find.text('Remote'), findsNothing);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  });
 }

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../core/prefs.dart';
 import 'ssap_messages.dart';
+import 'wol.dart' show macList;
 
 enum CmdState { connecting, ready, needsPairing, dead }
 
@@ -29,14 +30,23 @@ class CmdReplyErr extends CmdReply {
 
 const String _getInfoUri = 'ssap://com.webos.service.connectionmanager/getinfo';
 
-/// Wi-Fi MAC wins over wired (spec §5.1) -- shared by the automatic `s_mac`
-/// lookup here and by `WebOsClient.getMacFromDevice()`'s explicit call.
-String? extractMacAddress(Map<String, dynamic>? payload) {
-  final wifi = payload?['wifiInfo'] as Map<String, dynamic>?;
-  final wifiMac = wifi?['macAddress'] as String?;
-  if (wifiMac != null && wifiMac.isNotEmpty) return wifiMac;
-  final wired = payload?['wiredInfo'] as Map<String, dynamic>?;
-  return wired?['macAddress'] as String?;
+/// getinfo reports the Wi-Fi and the wired MAC whichever interface is plugged
+/// in, and only the live one wakes the TV, so both are kept and both get a
+/// magic packet.
+List<String> extractMacAddresses(Map<String, dynamic>? payload) => [
+      for (final key in ['wifiInfo', 'wiredInfo'])
+        if ((payload?[key] as Map<String, dynamic>?)?['macAddress']
+            case final String mac when mac.isNotEmpty)
+          mac,
+    ];
+
+/// Adds what the TV reports to the saved MACs without dropping one typed in
+/// by hand.
+String mergeMacs(String saved, List<String> found) {
+  final seen = <String>{};
+  return [...macList(saved), ...found]
+      .where((m) => seen.add(m.toUpperCase()))
+      .join(', ');
 }
 
 /// One shared, multiplexed SSAP socket. Requests are matched to replies by
@@ -132,7 +142,8 @@ class CommandSession {
       if (key != null && key.isNotEmpty) {
         _prefs.setClientKey(key);
       }
-      if (_prefs.tvMac.isEmpty) {
+      // Fewer than two means a pairing from before both MACs were kept.
+      if (macList(_prefs.tvMac).length < 2) {
         _ws?.add(encodeSsapMessage({
           'id': macLookupMessageId,
           'type': 'request',
@@ -155,10 +166,8 @@ class CommandSession {
     }
 
     if (type == 'response' && id == macLookupMessageId) {
-      final mac = extractMacAddress(payload);
-      if (mac != null && mac.isNotEmpty) {
-        _prefs.setTvMac(mac);
-      }
+      final merged = mergeMacs(_prefs.tvMac, extractMacAddresses(payload));
+      if (merged != _prefs.tvMac) _prefs.setTvMac(merged);
       return;
     }
 

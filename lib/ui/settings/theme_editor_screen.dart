@@ -7,6 +7,7 @@ import '../widgets/app_icon.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/buttons.dart';
 import '../widgets/color_picker_dialog.dart';
+import '../widgets/ios_back_button.dart';
 import '../widgets/section.dart';
 
 /// Spec §3.7. The editor's chrome (everything but the mock remote) is always
@@ -176,10 +177,11 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
       backgroundColor: active.windowBg,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 56),
+          padding: EdgeInsets.fromLTRB(16, IosBackButton.visible(context) ? 4 : 20, 16, 56),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const IosBackButton('Settings'),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Text(
