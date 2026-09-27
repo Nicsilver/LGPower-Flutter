@@ -1,3 +1,5 @@
+<img src="screenshots/banner.png" width="100%" alt="LG Power. A remote for LG webOS TVs.">
+
 # LG Power (Flutter)
 
 Cross-platform port of [LG Power](https://github.com/Nicsilver/LGPower), a remote for LG webOS TVs.
@@ -21,5 +23,6 @@ Free, no ads, nothing tracked. Talks only to the TV on your own network.
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=PsDJb3oJZoY">Watch the 30 second promo</a>
+  <a href="https://www.youtube.com/watch?v=PsDJb3oJZoY"><img src="screenshots/teaser.webp" width="80%" alt="LG Power in action"></a><br>
+  <a href="https://www.youtube.com/watch?v=PsDJb3oJZoY">Watch the 30 second promo with sound</a>
 </p>
