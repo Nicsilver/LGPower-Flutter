@@ -36,6 +36,9 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(48, '1.40.2', '2026-09-28', [
+      'Finding the TV right after allowing local network access, no need to search again',
+    ]),
     Release(46, '1.40.0', '2026-09-26', [
       'Back button at the top of Settings on iPhone',
       'Power wakes TVs on a network cable too: both the Wi-Fi and the wired address get the wake signal',

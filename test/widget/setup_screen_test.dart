@@ -2,6 +2,7 @@
 // successful pair -- `onPaired` drives real WebOsClient network calls
 // (getMacFromDevice) that need a live TV, exercised instead by the manual
 // verification pass against the fake TV (plan 03).
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -107,6 +108,48 @@ void main() {
       expect(find.text('No TVs found on this network'), findsOneWidget);
       expect(find.text('Search again'), findsOneWidget);
       expect(find.text('Enter IP manually'), findsOneWidget);
+    });
+
+    testWidgets('an empty first round is retried before giving up', (
+      tester,
+    ) async {
+      final (client, controller) = await _harness();
+      var calls = 0;
+      await tester.pumpWidget(
+        _app(
+          client,
+          controller,
+          discover: () async => ++calls < 3 ? const [] : _found(['10.0.0.5']),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(calls, 3);
+      expect(find.text('10.0.0.5'), findsOneWidget);
+    });
+
+    testWidgets('"No TVs found" keeps scanning and fills in a late TV', (
+      tester,
+    ) async {
+      final (client, controller) = await _harness();
+      var calls = 0;
+      final lateTv = Completer<List<FoundTv>>();
+      await tester.pumpWidget(
+        _app(
+          client,
+          controller,
+          discover: () => ++calls < 4 ? Future.value(const []) : lateTv.future,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('No TVs found on this network'), findsOneWidget);
+
+      lateTv.complete(_found(['10.0.0.5']));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('10.0.0.5'), findsOneWidget);
     });
 
     testWidgets('one result shows "TV FOUND" (singular) and the row', (

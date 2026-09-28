@@ -57,6 +57,7 @@ class SetupScreen extends StatefulWidget {
 class _SetupScreenState extends State<SetupScreen> {
   _Screen _screen = _Screen.searching;
   List<FoundTv> _tvList = const [];
+  int _scanGen = 0;
 
   String? _selectedIp;
   _PairingPhase _pairingPhase = _PairingPhase.connecting;
@@ -95,9 +96,29 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Future<void> _startDiscovery() async {
+    final gen = ++_scanGen;
     setState(() => _screen = _Screen.searching);
-    final found = await widget.discover();
-    if (!mounted) return;
+    // An empty first round is usually not an empty network: iOS drops every
+    // local packet while its Local Network prompt is still on screen, and a
+    // cold ARP cache can push the TV's reply past the port scan's timeout.
+    // Both are gone by the next round.
+    var found = const <FoundTv>[];
+    for (var round = 0; round < 3 && found.isEmpty; round++) {
+      found = await widget.discover();
+      if (!mounted || gen != _scanGen) return;
+    }
+    _showFound(found);
+    if (found.isNotEmpty) return;
+    // Keeps looking behind "No TVs found", so a Local Network prompt that is
+    // answered late still ends with the TV in the list without a manual retry
+    for (var round = 0; round < 6 && found.isEmpty; round++) {
+      found = await widget.discover();
+      if (!mounted || gen != _scanGen || _screen != _Screen.list) return;
+    }
+    if (found.isNotEmpty) _showFound(found);
+  }
+
+  void _showFound(List<FoundTv> found) {
     for (final f in found) {
       if (f.udn != null) _udns[f.ip] = f.udn!;
     }

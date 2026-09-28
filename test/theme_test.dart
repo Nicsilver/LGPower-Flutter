@@ -405,9 +405,9 @@ void main() {
   });
 
   group('ReleaseNotes.since', () {
-    test('32 returns exactly 33 through 46 (newest first)', () {
+    test('32 returns exactly 33 through 48 (newest first)', () {
       final releases = ReleaseNotes.since(32);
-      expect(releases.map((r) => r.code).toList(), [46, 45, 44, 43, 41, 40, 39, 38, 37, 36, 35, 34, 33]);
+      expect(releases.map((r) => r.code).toList(), [48, 46, 45, 44, 43, 41, 40, 39, 38, 37, 36, 35, 34, 33]);
     });
 
     test('forDevice drops IR notes, and releases left empty, without a blaster', () {
@@ -425,7 +425,7 @@ void main() {
     });
 
     test('all has no gaps below 1.22.0 and is sorted newest-first', () {
-      expect(ReleaseNotes.all.length, 46);
+      expect(ReleaseNotes.all.length, 47);
       for (var i = 1; i < ReleaseNotes.all.length; i++) {
         expect(ReleaseNotes.all[i].code, lessThanOrEqualTo(ReleaseNotes.all[i - 1].code));
       }

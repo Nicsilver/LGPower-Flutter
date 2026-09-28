@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.TRANSMIT_IR"/>
+    <!-- Flutter's template only declares this in the debug/profile manifests,
+         so without it here every release build has no network at all -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-feature android:name="android.hardware.consumerir" android:required="false"/>
     <application
         android:label="LG Power"
