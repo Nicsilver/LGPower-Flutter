@@ -53,6 +53,8 @@ class _TipSheetBodyState extends State<TipSheetBody> {
       case TipOutcome.thanked:
         Haptics.medium();
         Navigator.of(context).pop();
+      case TipOutcome.awaitingApproval:
+        showToast(context, 'The tip is waiting for approval.', long: true);
       case TipOutcome.cancelled:
         break;
       case TipOutcome.failed:

@@ -76,13 +76,41 @@ void main() {
       expect(store.completed, [purchase]);
     });
 
-    test('the store reporting pending keeps the spinner on that tile', () async {
+    test('a deferred purchase (Ask to Buy) frees the tiles and says it is waiting', () async {
       final (service, store, prefs) = await _service();
+      final outcomes = <TipOutcome>[];
+      service.outcomes.listen(outcomes.add);
+
+      await service.buy(service.products[1]);
       store.updates.add([fakePurchase('tip_medium', PurchaseStatus.pending, pendingComplete: false)]);
       await _settle();
-      expect(service.pendingId, 'tip_medium');
+
+      expect(service.pendingId, isNull);
+      expect(outcomes, [TipOutcome.awaitingApproval]);
       expect(store.completed, isEmpty);
       expect(prefs.hasTipped, isFalse);
+
+      final approved = fakePurchase('tip_medium', PurchaseStatus.purchased);
+      store.updates.add([approved]);
+      await _settle();
+      expect(prefs.hasTipped, isTrue);
+      expect(store.completed, [approved]);
+    });
+
+    test('another product landing mid-purchase leaves the spinner alone', () async {
+      final (service, store, prefs) = await _service();
+      final outcomes = <TipOutcome>[];
+      service.outcomes.listen(outcomes.add);
+
+      await service.buy(service.products[2]);
+      final other = fakePurchase('tip_small', PurchaseStatus.purchased);
+      store.updates.add([other]);
+      await _settle();
+
+      expect(service.pendingId, 'tip_large');
+      expect(outcomes, isEmpty);
+      expect(prefs.hasTipped, isTrue);
+      expect(store.completed, [other]);
     });
 
     test('a second tap while one is in flight is ignored', () async {

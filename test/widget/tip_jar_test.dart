@@ -169,4 +169,21 @@ void main() {
     // Let the toast's own timer run out.
     await tester.pump(const Duration(seconds: 4));
   });
+
+  testWidgets('an Ask to Buy deferral toasts and frees the tiles', (tester) async {
+    final store = FakeTipStore();
+    await _pumpSettings(tester, store: store);
+    await tester.tap(find.text('Leave a tip'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('\$2.99'));
+    await tester.pump();
+    store.updates.add([fakePurchase('tip_medium', PurchaseStatus.pending, pendingComplete: false)]);
+    await tester.pump();
+
+    expect(find.text('The tip is waiting for approval.'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('\$2.99'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4));
+  });
 }

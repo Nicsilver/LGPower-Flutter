@@ -7,7 +7,7 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'prefs.dart';
 
 /// What a tip attempt ended in, for whichever sheet is open to react to.
-enum TipOutcome { thanked, cancelled, failed }
+enum TipOutcome { thanked, awaitingApproval, cancelled, failed }
 
 /// The slice of the store the tip jar needs, so tests can stand in for StoreKit.
 abstract class TipStore {
@@ -103,9 +103,9 @@ class TipService extends ChangeNotifier {
     _pendingId = product.id;
     notifyListeners();
     try {
-      if (!await _store.buyConsumable(product)) _finish(TipOutcome.failed);
+      if (!await _store.buyConsumable(product)) _finish(product.id, TipOutcome.failed);
     } catch (_) {
-      _finish(TipOutcome.failed);
+      _finish(product.id, TipOutcome.failed);
     }
   }
 
@@ -113,16 +113,18 @@ class TipService extends ChangeNotifier {
     for (final purchase in updates) {
       switch (purchase.status) {
         case PurchaseStatus.pending:
-          _pendingId = purchase.productID;
-          notifyListeners();
+          // StoreKit 2 only reports pending for Ask to Buy and similar deferrals,
+          // which can take days or never resolve (a decline sends nothing), so
+          // the spinner can't wait on it. An approval arrives later as purchased.
+          _finish(purchase.productID, TipOutcome.awaitingApproval);
         case PurchaseStatus.purchased:
         case PurchaseStatus.restored:
           _prefs.setHasTipped(true);
-          _finish(TipOutcome.thanked);
+          _finish(purchase.productID, TipOutcome.thanked);
         case PurchaseStatus.canceled:
-          _finish(TipOutcome.cancelled);
+          _finish(purchase.productID, TipOutcome.cancelled);
         case PurchaseStatus.error:
-          _finish(TipOutcome.failed);
+          _finish(purchase.productID, TipOutcome.failed);
       }
       if (purchase.status != PurchaseStatus.pending && purchase.pendingCompletePurchase) {
         unawaited(_store.complete(purchase).catchError((Object _) {}));
@@ -130,13 +132,14 @@ class TipService extends ChangeNotifier {
     }
   }
 
-  void _finish(TipOutcome outcome) {
-    // A transaction re-delivered at launch has no sheet waiting on it, so a
-    // failure there must stay silent.
-    final wasWaiting = _pendingId != null;
-    _pendingId = null;
+  void _finish(String productId, TipOutcome outcome) {
+    // Only the transaction the open sheet started may stop its spinner or
+    // talk to it; one re-delivered at launch or approved later just updates
+    // the header.
+    final wasWaiting = _pendingId == productId;
+    if (wasWaiting) _pendingId = null;
     notifyListeners();
-    if (outcome == TipOutcome.thanked || wasWaiting) _outcomes.add(outcome);
+    if (wasWaiting) _outcomes.add(outcome);
   }
 
   @override
