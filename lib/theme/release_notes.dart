@@ -36,6 +36,10 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(50, '1.40.4', '2026-10-04', [
+      'Settings > About shows the app version up top',
+      "On iPhone you can leave an optional tip there if you like the app. It doesn't unlock anything",
+    ]),
     Release(49, '1.40.3', '2026-10-04', [
       'Load apps from TV shows every app icon on the first try',
     ]),
