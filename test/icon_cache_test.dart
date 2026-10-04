@@ -140,4 +140,23 @@ void main() {
     );
     expect(client.cachedIconFile('app.x'), isNotNull);
   });
+  test('a failed write does not block later downloads of the same icons', () async {
+    final server = _FlakyIconServer(limit: 4);
+    await server.start();
+    addTearDown(server.stop);
+    final client = await _client();
+    final apps = [
+      for (var i = 0; i < 10; i++) TvApp('app.$i', 'App $i', server.url(i)),
+    ];
+
+    PathProviderPlatform.instance =
+        _TempDirPathProvider('${dir.path}/missing');
+    await client.cacheMissingIcons(apps);
+
+    PathProviderPlatform.instance = _TempDirPathProvider(dir.path);
+    await client.cacheMissingIcons(apps);
+    for (final app in apps) {
+      expect(client.cachedIconFile(app.id), isNotNull, reason: app.id);
+    }
+  });
 }

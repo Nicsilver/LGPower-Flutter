@@ -662,7 +662,11 @@ class WebOsClient {
     final dir = await getApplicationSupportDirectory();
     _iconDir = dir;
     final file = File('${dir.path}/icon_${_sanitiseAppId(appId)}.png');
-    await file.writeAsBytes(bytes);
+    // cachedIconFile() only checks that the file exists, so a half-written
+    // file would be shown (and kept for good if the app dies mid-write).
+    final part = File('${file.path}.part');
+    await part.writeAsBytes(bytes, flush: true);
+    await part.rename(file.path);
     await _extractAndStoreColor(appId, bytes);
     return file;
   }
@@ -691,6 +695,9 @@ class WebOsClient {
         try {
           final file = await cacheIcon(app.id, app.iconUrl!, retryDelay: retryDelay);
           if (file != null) onCached?.call(app);
+        } catch (_) {
+          // A throwing write would otherwise end this worker and strand the
+          // rest of the queue in _iconsInFlight until the app restarts.
         } finally {
           _iconsInFlight.remove(app.id);
         }
