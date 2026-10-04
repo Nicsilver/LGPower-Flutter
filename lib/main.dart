@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
@@ -8,6 +9,7 @@ import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'core/prefs.dart';
+import 'core/tip_service.dart';
 import 'core/tv_store.dart';
 import 'net/webos_client.dart';
 import 'theme/theme_manager.dart';
@@ -46,15 +48,28 @@ Future<void> main() async {
     await prefs.setLastSeenVersion(versionCode);
   }
 
-  runApp(LgPowerApp(prefs: prefs, client: client, controller: controller));
+  final tips = TipService.platformSupported
+      ? TipService(prefs: prefs, store: StoreKitTipStore())
+      : null;
+  // Not awaited: a slow store must not hold up the first frame.
+  if (tips != null) unawaited(tips.start());
+
+  runApp(LgPowerApp(prefs: prefs, client: client, controller: controller, tips: tips));
 }
 
 class LgPowerApp extends StatelessWidget {
-  const LgPowerApp({super.key, required this.prefs, required this.client, required this.controller});
+  const LgPowerApp({
+    super.key,
+    required this.prefs,
+    required this.client,
+    required this.controller,
+    this.tips,
+  });
 
   final Prefs prefs;
   final WebOsClient client;
   final AppThemeController controller;
+  final TipService? tips;
 
   @override
   Widget build(BuildContext context) {
@@ -89,9 +104,12 @@ class LgPowerApp extends StatelessWidget {
             ),
             // An imperative setSystemUIOverlayStyle call gets overridden by the
             // framework's own per-frame style; an AnnotatedRegion wins every frame.
-            builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
-              value: ThemeManager.overlayStyle(active),
-              child: child ?? const SizedBox.shrink(),
+            builder: (context, child) => TipScope(
+              service: tips,
+              child: AnnotatedRegion<SystemUiOverlayStyle>(
+                value: ThemeManager.overlayStyle(active),
+                child: child ?? const SizedBox.shrink(),
+              ),
             ),
             home: prefs.tvIp.isEmpty ? SetupScreen(client: client) : const MainScreen(),
           );

@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/haptics.dart';
 import '../../core/right_pill.dart';
+import '../../core/tip_service.dart';
 import '../../core/tv_store.dart';
 import '../../core/wake_action.dart';
 import '../../net/ir.dart';
@@ -13,6 +14,7 @@ import '../../theme/release_notes.dart';
 import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
 import '../setup/setup_screen.dart';
+import '../widgets/about_header.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/app_switch.dart';
 import '../widgets/app_toast.dart';
@@ -68,6 +70,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _selected = widget.client.loadShortcuts();
     _apps = List.of(_selected);
     _loadVersion();
+    // Covers a store that was unreachable at launch.
+    final tips = TipScope.read(context);
+    if (tips != null) unawaited(tips.refresh());
     _loadIrEmitter();
     if (prefs.tourSettingsPending) {
       prefs.setTourSettingsPending(false);
@@ -707,6 +712,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _aboutGroup(ThemeConfig theme) {
     return Column(
       children: [
+        AboutHeader(version: _version),
+        const RowDivider(),
         _navRow(
           theme,
           label: 'Show the tour',
@@ -717,7 +724,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _navRow(
           theme,
           label: 'Release notes',
-          value: _version,
           onTap: _openReleaseNotes,
           correctedChevron: false,
         ),

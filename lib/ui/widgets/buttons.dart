@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/theme_manager.dart';
+import 'app_icon.dart';
 
 /// Filled call-to-action button (`btn_accent_bg`/`btn_accent_text`) — e.g.
 /// "Connect", "Save Theme", the release-notes footer button.
@@ -11,6 +12,7 @@ class AccentButton extends StatelessWidget {
     required this.onPressed,
     this.height = 48,
     this.radius = 10,
+    this.icon,
   });
 
   final String label;
@@ -18,9 +20,20 @@ class AccentButton extends StatelessWidget {
   final double height;
   final double radius;
 
+  /// Name of an `assets/icons` vector drawn before the label.
+  final String? icon;
+
   @override
   Widget build(BuildContext context) {
     final theme = AppTheme.of(context);
+    final text = Text(
+      label,
+      style: TextStyle(
+        color: theme.btnAccentText,
+        fontSize: 15,
+        fontWeight: FontWeight.bold,
+      ),
+    );
     return SizedBox(
       height: height,
       child: Material(
@@ -30,14 +43,16 @@ class AccentButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(radius),
           onTap: onPressed,
           child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: theme.btnAccentText,
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            child: icon == null
+                ? text
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AppIcon(icon!, size: 18, color: theme.btnAccentText),
+                      const SizedBox(width: 8),
+                      text,
+                    ],
+                  ),
           ),
         ),
       ),

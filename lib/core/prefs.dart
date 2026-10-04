@@ -74,6 +74,11 @@ class Prefs {
   Future<void> setLastSeenVersion(int value) =>
       _sp.setInt('last_seen_version', value);
 
+  /// Local only; nothing is unlocked by it, it just switches the About header
+  /// to its thanks line.
+  bool get hasTipped => _sp.getBool('has_tipped') ?? false;
+  Future<void> setHasTipped(bool value) => _sp.setBool('has_tipped', value);
+
   String get themeId => _sp.getString('theme_id') ?? 'dark';
   Future<void> setThemeId(String value) => _sp.setString('theme_id', value);
 
