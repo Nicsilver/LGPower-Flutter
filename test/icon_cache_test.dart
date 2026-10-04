@@ -99,7 +99,6 @@ void main() {
     await server.start();
     addTearDown(server.stop);
     final client = await _client();
-    await client.cacheMissingIcons(const []);
 
     final apps = [
       for (var i = 0; i < 40; i++) TvApp('app.$i', 'App $i', server.url(i)),
@@ -116,6 +115,21 @@ void main() {
       expect(client.cachedIconFile(app.id), isNotNull, reason: app.id);
     }
     expect(server.peak, lessThanOrEqualTo(4));
+  });
+
+  test('a junk file left in the cache by an older build is refetched and replaced', () async {
+    final server = _FlakyIconServer(limit: 4);
+    await server.start();
+    addTearDown(server.stop);
+    final client = await _client();
+    final junk = File('${dir.path}/icon_app.x.png')
+      ..writeAsStringSync('<html>503 Service Unavailable</html>');
+    expect(client.cachedIconFile('app.x'), isNull);
+
+    await client.cacheMissingIcons([TvApp('app.x', 'X', server.url(1))]);
+
+    expect(client.cachedIconFile('app.x'), isNotNull);
+    expect(junk.readAsBytesSync(), _png);
   });
 
   test('a failed download is not cached and is retried on the next load', () async {

@@ -36,6 +36,9 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(49, '1.40.3', '2026-10-04', [
+      'Load apps from TV shows every app icon on the first try',
+    ]),
     Release(48, '1.40.2', '2026-09-28', [
       'Finding the TV right after allowing local network access, no need to search again',
     ]),

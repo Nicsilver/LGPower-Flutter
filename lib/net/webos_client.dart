@@ -735,7 +735,36 @@ class WebOsClient {
     final dir = _iconDir;
     if (dir == null) return null;
     final file = File('${dir.path}/icon_${_sanitiseAppId(appId)}.png');
-    return file.existsSync() ? file : null;
+    if (!file.existsSync()) return null;
+    // Builds before the 200-only check could store an error page as the icon;
+    // treating it as missing makes "Load apps" refetch it and the UI fall back
+    // to the letter tile instead of a broken image.
+    return _looksLikeImage(file) ? file : null;
+  }
+
+  static bool _looksLikeImage(File file) {
+    RandomAccessFile? raf;
+    try {
+      raf = file.openSync();
+      final h = raf.readSync(12);
+      bool starts(List<int> magic, [int at = 0]) {
+        if (h.length < at + magic.length) return false;
+        for (var i = 0; i < magic.length; i++) {
+          if (h[at + i] != magic[i]) return false;
+        }
+        return true;
+      }
+
+      return starts(const [0x89, 0x50, 0x4E, 0x47]) ||
+          starts(const [0xFF, 0xD8, 0xFF]) ||
+          starts(const [0x47, 0x49, 0x46, 0x38]) ||
+          (starts(const [0x52, 0x49, 0x46, 0x46]) &&
+              starts(const [0x57, 0x45, 0x42, 0x50], 8));
+    } catch (_) {
+      return false;
+    } finally {
+      raf?.closeSync();
+    }
   }
 
   int? loadCachedColor(String appId) =>

@@ -296,8 +296,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     setState(() => _apps = apps);
     // Every tile in the grid gets its icon downloaded here, not just the
-    // selected ones (spec §2.3's "missing icons download on an 8-thread
-    // pool" applies to the whole loaded list).
+    // selected ones (spec §2.3's missing-icon download applies to the whole
+    // loaded list).
     _cacheMissingIconsFor(apps);
   }
 
