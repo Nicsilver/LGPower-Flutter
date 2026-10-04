@@ -1,8 +1,11 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.TRANSMIT_IR"/>
     <!-- Flutter's template only declares this in the debug/profile manifests,
          so without it here every release build has no network at all -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The sideloaded build never bills; the in_app_purchase plugin merges this in anyway -->
+    <uses-permission android:name="com.android.vending.BILLING" tools:node="remove"/>
     <uses-feature android:name="android.hardware.consumerir" android:required="false"/>
     <application
         android:label="LG Power"

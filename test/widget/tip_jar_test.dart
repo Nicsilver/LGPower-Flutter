@@ -95,9 +95,9 @@ void main() {
     expect(find.text('Leave a tip'), findsNothing);
   });
 
-  testWidgets('after a tip the header says thanks and the button reads Tip again', (tester) async {
+  testWidgets('after a tip the header keeps the version, says thanks and the button reads Tip again', (tester) async {
     await _pumpSettings(tester, prefValues: {'has_tipped': true});
-    expect(find.text('Thanks for the tip!'), findsOneWidget);
+    expect(find.text('Version 1.40.3 · thanks for the tip!'), findsOneWidget);
     expect(find.text('Version 1.40.3 · free, no ads'), findsNothing);
     expect(find.text('Tip again'), findsOneWidget);
     expect(find.byType(GhostButton), findsWidgets);
@@ -133,7 +133,7 @@ void main() {
 
     expect(find.text('LEAVE A TIP'), findsNothing);
     expect(service.hasTipped, isTrue);
-    expect(find.text('Thanks for the tip!'), findsOneWidget);
+    expect(find.text('Version 1.40.3 · thanks for the tip!'), findsOneWidget);
     expect(find.text('Tip again'), findsOneWidget);
   });
 

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../core/haptics.dart';
 import '../../core/tip_service.dart';
 import '../../theme/theme_manager.dart';
-import 'app_icon.dart';
 import 'buttons.dart';
 import 'tip_sheet.dart';
 
@@ -13,6 +12,11 @@ class AboutHeader extends StatelessWidget {
   const AboutHeader({super.key, required this.version});
 
   final String version;
+
+  String _line(bool tipped) {
+    if (version.isEmpty) return tipped ? 'Thanks for the tip!' : 'Free, no ads';
+    return tipped ? 'Version $version · thanks for the tip!' : 'Version $version · free, no ads';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,21 +49,9 @@ class AboutHeader extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 3),
-                    if (tipped)
-                      Row(
-                        children: [
-                          AppIcon('ic_heart_filled', size: 12, color: theme.secondaryText),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Thanks for the tip!',
-                            style: TextStyle(fontSize: 12, color: theme.secondaryText),
-                          ),
-                        ],
-                      )
-                    else
-                      Text(
-                        version.isEmpty ? 'Free, no ads' : 'Version $version · free, no ads',
-                        style: TextStyle(fontSize: 12, color: theme.secondaryText),
+                    Text(
+                      _line(tipped),
+                      style: TextStyle(fontSize: 12, color: theme.secondaryText),
                       ),
                   ],
                 ),
