@@ -620,13 +620,7 @@ class WebOsClient {
       // gotcha: `..connectionTimeout` would otherwise apply to the `bool`).
       client = HttpClient()..badCertificateCallback = (cert, host, port) => true;
       client.connectionTimeout = const Duration(seconds: 3);
-      final request = await client.getUrl(Uri.parse(url));
-      final response = await request.close();
-      final bytesBuilder = BytesBuilder();
-      await for (final chunk in response) {
-        bytesBuilder.add(chunk);
-      }
-      return bytesBuilder.toBytes();
+      return await _readIcon(client, url).timeout(const Duration(seconds: 10));
     } catch (_) {
       return null;
     } finally {
@@ -634,8 +628,36 @@ class WebOsClient {
     }
   }
 
-  Future<File?> cacheIcon(String appId, String url) async {
-    final bytes = await fetchIcon(url);
+  Future<Uint8List?> _readIcon(HttpClient client, String url) async {
+    final request = await client.getUrl(Uri.parse(url));
+    final response = await request.close();
+    // The TV's icon server answers 5xx/404 under load; that body is not an
+    // image and must never reach the cache.
+    if (response.statusCode != HttpStatus.ok) {
+      await response.drain<void>();
+      return null;
+    }
+    final bytesBuilder = BytesBuilder();
+    await for (final chunk in response) {
+      bytesBuilder.add(chunk);
+    }
+    final bytes = bytesBuilder.toBytes();
+    return bytes.isEmpty ? null : bytes;
+  }
+
+  static const _iconAttempts = 3;
+  final _iconsInFlight = <String>{};
+
+  Future<File?> cacheIcon(
+    String appId,
+    String url, {
+    Duration retryDelay = const Duration(milliseconds: 400),
+  }) async {
+    Uint8List? bytes;
+    for (var attempt = 1; bytes == null && attempt <= _iconAttempts; attempt++) {
+      if (attempt > 1) await Future<void>.delayed(retryDelay * (attempt - 1));
+      bytes = await fetchIcon(url);
+    }
     if (bytes == null) return null;
     final dir = await getApplicationSupportDirectory();
     _iconDir = dir;
@@ -643,6 +665,39 @@ class WebOsClient {
     await file.writeAsBytes(bytes);
     await _extractAndStoreColor(appId, bytes);
     return file;
+  }
+
+  /// Downloads the icons of [apps] that are not cached yet through a small
+  /// worker pool: the TV's icon server drops connections when a whole app
+  /// list is requested at once, which left random tiles without an icon.
+  Future<void> cacheMissingIcons(
+    Iterable<TvApp> apps, {
+    void Function(TvApp app)? onCached,
+    int concurrency = 4,
+    Duration retryDelay = const Duration(milliseconds: 400),
+  }) async {
+    // Saving shortcuts and loading the TV's list both call this; without the
+    // in-flight set the same icon would be requested twice at once.
+    final queue = [
+      for (final app in apps)
+        if (app.iconUrl != null &&
+            cachedIconFile(app.id) == null &&
+            _iconsInFlight.add(app.id))
+          app,
+    ];
+    Future<void> worker() async {
+      while (queue.isNotEmpty) {
+        final app = queue.removeLast();
+        try {
+          final file = await cacheIcon(app.id, app.iconUrl!, retryDelay: retryDelay);
+          if (file != null) onCached?.call(app);
+        } finally {
+          _iconsInFlight.remove(app.id);
+        }
+      }
+    }
+
+    await Future.wait([for (var i = 0; i < concurrency; i++) worker()]);
   }
 
   Future<void> _extractAndStoreColor(String appId, Uint8List bytes) async {

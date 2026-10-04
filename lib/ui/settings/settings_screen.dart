@@ -271,16 +271,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _cacheMissingIconsFor(List<TvApp> apps) {
-    for (final app in apps) {
-      final url = app.iconUrl;
-      if (url == null) continue;
-      if (widget.client.cachedIconFile(app.id) != null) continue;
-      unawaited(
-        widget.client.cacheIcon(app.id, url).then((_) {
+    unawaited(
+      widget.client.cacheMissingIcons(
+        apps,
+        onCached: (_) {
           if (mounted) setState(() {});
-        }),
-      );
-    }
+        },
+      ),
+    );
   }
 
   Future<void> _loadAppsFromTv() async {

@@ -199,10 +199,7 @@ class _SetupScreenState extends State<SetupScreen> {
     final picked = WebOsClient.pickDefaultShortcuts(apps);
     if (picked.isNotEmpty) {
       await client.saveShortcuts(picked);
-      for (final app in picked) {
-        final url = app.iconUrl;
-        if (url != null) unawaited(client.cacheIcon(app.id, url));
-      }
+      unawaited(client.cacheMissingIcons(picked));
     }
     if (!mounted) return;
     if (widget.addMode) {
