@@ -125,3 +125,15 @@ jobs:
           issuer-id: ${{ vars.APPSTORE_ISSUER_ID }}
           api-key-id: ${{ vars.APPSTORE_API_KEY_ID }}
           api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+      # External groups have no auto-distribute: wait for processing, set What to
+      # Test, add the build to "Public" and submit it for Beta App Review.
+      - name: Hand build to the Public TestFlight group
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          APPSTORE_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
+          APPSTORE_API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+        run: |
+          python3 -m pip install --quiet pyjwt cryptography requests
+          python3 tool/testflight_public.py
