@@ -36,6 +36,9 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(52, '1.40.6', '2026-10-06', [
+      'Small fixes behind the scenes',
+    ]),
     Release(51, '1.40.5', '2026-10-06', [
       'LG Power is now called Power Remote',
     ]),
