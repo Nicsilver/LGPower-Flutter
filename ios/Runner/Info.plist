@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>LG Power</string>
+	<string>Power Remote</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -54,7 +54,7 @@
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>LG Power finds and controls your LG TV on your Wi-Fi network.</string>
+	<string>Power Remote finds and controls your LG TV on your Wi-Fi network.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_ssdp._udp</string>

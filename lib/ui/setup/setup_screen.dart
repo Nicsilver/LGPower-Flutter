@@ -257,7 +257,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 const SizedBox(height: 24),
               ],
               Text(
-                'LG Power',
+                'Power Remote',
                 style: TextStyle(
                   fontSize: 30,
                   fontWeight: FontWeight.bold,

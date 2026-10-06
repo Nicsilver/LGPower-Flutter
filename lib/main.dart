@@ -84,7 +84,7 @@ class LgPowerApp extends StatelessWidget {
           final active = controller.theme;
           final brightness = ThemeData.estimateBrightnessForColor(active.windowBg);
           return MaterialApp(
-            title: 'LG Power',
+            title: 'Power Remote',
             debugShowCheckedModeBanner: false,
             theme: ThemeData(
               brightness: brightness,

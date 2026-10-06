@@ -75,7 +75,7 @@ void main() {
 
   testWidgets('with tips on offer the header has the button and the version line', (tester) async {
     await _pumpSettings(tester);
-    expect(find.text('LG Power'), findsOneWidget);
+    expect(find.text('Power Remote'), findsOneWidget);
     expect(find.text('Version 1.40.3 · free, no ads'), findsOneWidget);
     expect(find.text('Leave a tip'), findsOneWidget);
     expect(find.text('Tip again'), findsNothing);

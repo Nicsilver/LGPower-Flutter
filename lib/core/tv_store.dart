@@ -77,7 +77,7 @@ class TvStore {
 
   /// Display name for the remote's title.
   static String activeName(Prefs prefs) =>
-      active(prefs)?.name ?? 'LG TV Remote';
+      active(prefs)?.name ?? 'TV Remote';
 
   static String nextDefaultName(Prefs prefs) {
     final n = list(prefs).length;

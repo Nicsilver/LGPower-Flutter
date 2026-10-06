@@ -45,7 +45,7 @@ class RemoteController extends ChangeNotifier {
   List<TvApp> shortcuts = const [];
 
   /// The active TV's name, shown as the remote's title.
-  String tvName = 'LG TV Remote';
+  String tvName = 'TV Remote';
 
   int _wakeGen = 0;
   bool _discovering = false;

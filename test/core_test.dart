@@ -24,7 +24,7 @@ void main() {
       final prefs = await _prefs();
       expect(TvStore.list(prefs), isEmpty);
       expect(TvStore.activeId(prefs), isNull);
-      expect(TvStore.activeName(prefs), 'LG TV Remote');
+      expect(TvStore.activeName(prefs), 'TV Remote');
       expect(TvStore.nextDefaultName(prefs), 'LG TV');
     });
 

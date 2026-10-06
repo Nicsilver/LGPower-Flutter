@@ -36,6 +36,9 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(51, '1.40.5', '2026-10-06', [
+      'LG Power is now called Power Remote',
+    ]),
     Release(50, '1.40.4', '2026-10-04', [
       'Settings > About shows the app version up top',
       "On iPhone you can leave an optional tip there if you like the app. It doesn't unlock anything",
