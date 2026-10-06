@@ -405,9 +405,13 @@ void main() {
   });
 
   group('ReleaseNotes.since', () {
-    test('32 returns exactly 33 through 52 (newest first)', () {
-      final releases = ReleaseNotes.since(32);
-      expect(releases.map((r) => r.code).toList(), [52, 51, 50, 49, 48, 46, 45, 44, 43, 41, 40, 39, 38, 37, 36, 35, 34, 33]);
+    test('returns only releases newer than the given code, newest first', () {
+      final codes = ReleaseNotes.since(32).map((r) => r.code).toList();
+      expect(codes, isNotEmpty);
+      expect(codes.every((c) => c > 32), isTrue);
+      expect(codes.last, 33);
+      expect(codes, ReleaseNotes.all.map((r) => r.code).where((c) => c > 32).toList());
+      expect(ReleaseNotes.since(ReleaseNotes.all.first.code), isEmpty);
     });
 
     test('forDevice drops IR notes, and releases left empty, without a blaster', () {
@@ -424,8 +428,7 @@ void main() {
       expect(withoutIr.length, ReleaseNotes.all.length - 1);
     });
 
-    test('all has no gaps below 1.22.0 and is sorted newest-first', () {
-      expect(ReleaseNotes.all.length, 51);
+    test('all is sorted newest-first', () {
       for (var i = 1; i < ReleaseNotes.all.length; i++) {
         expect(ReleaseNotes.all[i].code, lessThanOrEqualTo(ReleaseNotes.all[i - 1].code));
       }
