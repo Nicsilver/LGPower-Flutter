@@ -36,6 +36,11 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(53, '1.40.7', '2026-10-16', [
+      'The remote fits on phones around 400 points wide instead of cutting off the right-hand buttons',
+      'Removed a stray dot on the channel-up button',
+      'Phones with an IR blaster can skip setup and go straight to the IR service remote',
+    ]),
     Release(52, '1.40.6', '2026-10-06', [
       'Small fixes behind the scenes',
     ]),
