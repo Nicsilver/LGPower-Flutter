@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/tv_store.dart';
+import '../../net/ir.dart';
 import '../../net/pairing_watcher.dart';
 import '../../net/tv_discovery.dart';
 import '../../net/webos_client.dart';
 import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
 import '../main/main_screen.dart';
+import '../settings/service_remote_screen.dart';
 import '../widgets/buttons.dart';
 import '../widgets/ios_back_button.dart';
 import '../widgets/section.dart';
@@ -29,6 +31,7 @@ class SetupScreen extends StatefulWidget {
     this.addMode = false,
     this.fingerprint = fingerprintTv,
     this.backLabel = 'Back',
+    this.hasIrEmitter = Ir.hasEmitter,
   });
 
   final WebOsClient client;
@@ -50,6 +53,9 @@ class SetupScreen extends StatefulWidget {
   /// Names the screen underneath on the iPhone back button (add mode only).
   final String backLabel;
 
+  /// Injectable for tests; gates the IR-only skip link.
+  final Future<bool> Function() hasIrEmitter;
+
   @override
   State<SetupScreen> createState() => _SetupScreenState();
 }
@@ -67,6 +73,7 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _promptShown = false;
   bool _paired = false;
   bool _finishing = false;
+  bool _hasIr = false;
 
   // Fingerprints from discovery, and the one for the TV being paired
   // (fetched for manual entries)
@@ -83,6 +90,9 @@ class _SetupScreenState extends State<SetupScreen> {
     // fresh install is not mistaken for an upgrade with an unnamed TV
     TvStore.list(prefs);
     if (widget.addMode) TvStore.beginAdd(prefs);
+    widget.hasIrEmitter().then((v) {
+      if (mounted && v) setState(() => _hasIr = true);
+    });
     _startDiscovery();
   }
 
@@ -272,6 +282,25 @@ class _SetupScreenState extends State<SetupScreen> {
               ),
               const SizedBox(height: 48),
               _buildScreen(theme),
+              // Some IR-phone owners never want the app on their network; the
+              // service remote is IR-only, so it works without pairing
+              if (_hasIr && !widget.addMode && _screen != _Screen.pairing) ...[
+                const SizedBox(height: 28),
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const ServiceRemoteScreen()),
+                  ),
+                  child: Text(
+                    'Skip, use the IR service remote',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: theme.secondaryText,
+                      decoration: TextDecoration.underline,
+                      decorationColor: theme.secondaryText,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

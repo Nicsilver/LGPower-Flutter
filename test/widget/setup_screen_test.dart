@@ -76,6 +76,7 @@ Widget _app(
   required Future<List<FoundTv>> Function() discover,
   PairingWatch? pairingWatch,
   bool addMode = false,
+  bool hasIr = false,
 }) {
   return AppTheme(
     controller: controller,
@@ -86,6 +87,7 @@ Widget _app(
         pairingWatch: pairingWatch,
         addMode: addMode,
         fingerprint: (_) async => null,
+        hasIrEmitter: () async => hasIr,
       ),
     ),
   );
@@ -93,6 +95,51 @@ Widget _app(
 
 void main() {
   installFakePathProvider();
+
+  group('IR-only skip', () {
+    const link = 'Skip, use the IR service remote';
+
+    testWidgets('shows on IR phones and opens the service remote', (
+      tester,
+    ) async {
+      final (client, controller) = await _harness();
+      await tester.pumpWidget(
+        _app(client, controller, discover: () async => const [], hasIr: true),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text(link), findsOneWidget);
+      await tester.tap(find.text(link));
+      await tester.pumpAndSettle();
+      expect(find.byType(SetupScreen), findsNothing);
+    });
+
+    testWidgets('hidden without an IR blaster and in add mode', (
+      tester,
+    ) async {
+      final (client, controller) = await _harness();
+      await tester.pumpWidget(
+        _app(client, controller, discover: () async => const []),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text(link), findsNothing);
+
+      await tester.pumpWidget(
+        _app(
+          client,
+          controller,
+          discover: () async => const [],
+          hasIr: true,
+          addMode: true,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text(link), findsNothing);
+    });
+  });
 
   group('discovery states', () {
     testWidgets('empty result shows "No TVs found" and manual-IP entry', (
