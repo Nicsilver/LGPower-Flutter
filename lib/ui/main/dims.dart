@@ -1,8 +1,8 @@
 import 'package:flutter/widgets.dart';
 
-/// Compact (360dp-wide phones) vs sw400dp dimension set (port spec §2),
+/// Compact (360dp-wide phones) vs sw410dp dimension set (port spec §2),
 /// picked once per build from `shortestSide`. Values are copied verbatim
-/// from `values/dimens.xml` and `values-sw400dp/dimens.xml`.
+/// from `values/dimens.xml` and `values-sw410dp/dimens.xml`.
 class MainDims {
   const MainDims._({
     required this.mainPadH,
@@ -35,7 +35,7 @@ class MainDims {
     dpadBottomGap: 96,
   );
 
-  static const sw400 = MainDims._(
+  static const sw410 = MainDims._(
     mainPadH: 24,
     pillWidth: 54,
     dpadSize: 230,
@@ -48,6 +48,7 @@ class MainDims {
 
   static MainDims of(BuildContext context) {
     final shortestSide = MediaQuery.of(context).size.shortestSide;
-    return shortestSide >= 400 ? sw400 : compact;
+    // The full row needs 406dp with padding; 400dp phones clipped the right pill.
+    return shortestSide >= 410 ? sw410 : compact;
   }
 }
