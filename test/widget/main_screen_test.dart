@@ -152,9 +152,9 @@ void main() {
     await _pumpMainScreen(tester, prefs: prefs, client: client);
 
     // A pre-saved-TVs install (flat tv_ip only) migrates into one TV named
-    // "LG TV", which is what the title now shows.
+    // "TV", which is what the title now shows.
     for (final label in [
-      'LG TV',
+      'TV',
       'Power',
       'Touchpad',
       'Keyboard',

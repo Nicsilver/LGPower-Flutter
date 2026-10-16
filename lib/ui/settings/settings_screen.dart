@@ -33,9 +33,22 @@ import 'tv_detail_screen.dart';
 /// this screen live on a theme change (no `recreate()` flash, unlike the
 /// Kotlin source -- see spec §2.9).
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.client, this.listApps});
+  const SettingsScreen({
+    super.key,
+    required this.client,
+    this.listApps,
+    this.limited = false,
+    this.backLabel = 'Remote',
+  });
 
   final WebOsClient client;
+
+  /// Opened from the setup screen before any TV is paired: only the sections
+  /// that work without a connection (Appearance, About) are shown.
+  final bool limited;
+
+  /// Names the screen underneath on the iPhone back button.
+  final String backLabel;
 
   /// Injectable for tests; defaults to [WebOsClient.listApps] (real TV call).
   final Future<(List<TvApp>, String?)> Function()? listApps;
@@ -412,7 +425,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const IosBackButton('Remote'),
+              IosBackButton(widget.backLabel),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Text(
@@ -425,24 +438,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const SizedBox(height: 32),
-              _section(
-                'TVs',
-                first: true,
-                cardKey: _tvsGroupKey,
-                child: _tvsGroup(theme),
-              ),
-              _section('Controls', child: _controlsGroup(theme)),
-              _section(
-                'App Shortcuts',
-                cardKey: _shortcutsGroupKey,
-                child: _shortcutsGroup(theme),
-              ),
+              if (!widget.limited) ...[
+                _section(
+                  'TVs',
+                  first: true,
+                  cardKey: _tvsGroupKey,
+                  child: _tvsGroup(theme),
+                ),
+                _section('Controls', child: _controlsGroup(theme)),
+                _section(
+                  'App Shortcuts',
+                  cardKey: _shortcutsGroupKey,
+                  child: _shortcutsGroup(theme),
+                ),
+              ],
               _section(
                 'Appearance',
+                first: widget.limited,
                 cardKey: _appearanceGroupKey,
                 child: _appearanceGroup(theme),
               ),
-              if (_hasIrEmitter)
+              if (_hasIrEmitter && !widget.limited)
                 _section('Advanced', child: _advancedGroup(theme)),
               _section('About', child: _aboutGroup(theme)),
             ],
@@ -714,13 +730,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       children: [
         AboutHeader(version: _version),
         const RowDivider(),
-        _navRow(
-          theme,
-          label: 'Show the tour',
-          onTap: _showTour,
-          correctedChevron: false,
-        ),
-        const RowDivider(),
+        if (!widget.limited) ...[
+          _navRow(
+            theme,
+            label: 'Show the tour',
+            onTap: _showTour,
+            correctedChevron: false,
+          ),
+          const RowDivider(),
+        ],
         _navRow(
           theme,
           label: 'Release notes',

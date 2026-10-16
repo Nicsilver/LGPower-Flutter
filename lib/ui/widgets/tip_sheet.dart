@@ -45,6 +45,7 @@ class _TipSheetBodyState extends State<TipSheetBody> {
   void initState() {
     super.initState();
     _sub = widget.service.outcomes.listen(_onOutcome);
+    unawaited(widget.service.refresh());
   }
 
   void _onOutcome(TipOutcome outcome) {
@@ -92,24 +93,37 @@ class _TipSheetBodyState extends State<TipSheetBody> {
                 padding: EdgeInsets.only(bottom: 8),
                 child: SectionLabel('Leave a tip'),
               ),
-              Row(
-                children: [
-                  for (var i = 0; i < service.products.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 8),
-                    Expanded(
-                      child: _TipTile(
-                        product: service.products[i],
-                        pending: service.pendingId == service.products[i].id,
-                        enabled: service.pendingId == null,
-                        onTap: () {
-                          Haptics.light();
-                          unawaited(service.buy(service.products[i]));
-                        },
+              if (service.products.isEmpty)
+                SurfaceCard(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
+                    child: Center(
+                      child: Text(
+                        'Tips are unavailable right now',
+                        style: TextStyle(fontSize: 15, color: theme.secondaryText),
                       ),
                     ),
+                  ),
+                )
+              else
+                Row(
+                  children: [
+                    for (var i = 0; i < service.products.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(
+                        child: _TipTile(
+                          product: service.products[i],
+                          pending: service.pendingId == service.products[i].id,
+                          enabled: service.pendingId == null,
+                          onTap: () {
+                            Haptics.light();
+                            unawaited(service.buy(service.products[i]));
+                          },
+                        ),
+                      ),
+                    ],
                   ],
-                ],
-              ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 14, 4, 0),
                 child: Text(

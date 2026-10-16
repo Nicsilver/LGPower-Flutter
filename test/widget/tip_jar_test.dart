@@ -89,10 +89,15 @@ void main() {
     expect(find.text('Leave a tip'), findsNothing);
   });
 
-  testWidgets('a store that is unavailable hides the button rather than erroring', (tester) async {
+  testWidgets('a store that is unavailable keeps the button and the sheet says so', (tester) async {
     await _pumpSettings(tester, store: FakeTipStore(available: false));
     expect(find.text('Version 1.40.3 · free, no ads'), findsOneWidget);
-    expect(find.text('Leave a tip'), findsNothing);
+    expect(find.text('Leave a tip'), findsOneWidget);
+
+    await tester.tap(find.text('Leave a tip'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tips are unavailable right now'), findsOneWidget);
+    expect(find.text('\$0.99'), findsNothing);
   });
 
   testWidgets('after a tip the header keeps the version, says thanks and the button reads Tip again', (tester) async {

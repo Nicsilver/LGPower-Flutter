@@ -11,6 +11,8 @@ import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
 import '../main/main_screen.dart';
 import '../settings/service_remote_screen.dart';
+import '../settings/settings_screen.dart';
+import '../widgets/app_icon.dart';
 import '../widgets/buttons.dart';
 import '../widgets/ios_back_button.dart';
 import '../widgets/section.dart';
@@ -233,6 +235,16 @@ class _SetupScreenState extends State<SetupScreen> {
     _startDiscovery();
   }
 
+  // Settings otherwise only opens from the remote, which needs a paired TV;
+  // this keeps Appearance, About and the tip jar reachable before that.
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(client: widget.client, limited: true, backLabel: 'Setup'),
+      ),
+    );
+  }
+
   Future<void> _showManualIpDialog() async {
     final ip = await showDialog<String>(
       context: context,
@@ -248,8 +260,10 @@ class _SetupScreenState extends State<SetupScreen> {
     final backButton = IosBackButton.visible(context);
     return Scaffold(
       backgroundColor: theme.windowBg,
-      body: SafeArea(
-        child: SingleChildScrollView(
+      body: Stack(
+        children: [
+          SafeArea(
+            child: SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(20, backButton ? 4 : 72, 20, 40),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -303,7 +317,23 @@ class _SetupScreenState extends State<SetupScreen> {
               ],
             ],
           ),
-        ),
+            ),
+          ),
+          if (!widget.addMode && _screen != _Screen.pairing)
+            SafeArea(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4, right: 8),
+                  child: IconButton(
+                    tooltip: 'Settings',
+                    onPressed: _openSettings,
+                    icon: AppIcon('ic_settings', size: 22, color: theme.secondaryText),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -583,7 +613,7 @@ class _TvRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            already?.name ?? 'LG TV',
+            already?.name ?? 'TV',
             style: TextStyle(fontSize: 16, color: theme.primaryText),
           ),
           Text(

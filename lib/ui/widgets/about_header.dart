@@ -22,7 +22,9 @@ class AboutHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = AppTheme.of(context);
     final tips = TipScope.of(context);
-    final canTip = tips != null && tips.canTip;
+    // Shown wherever tipping is on offer, even while the store has no products
+    // to list: the sheet then says so instead of the entry vanishing.
+    final canTip = tips != null;
     final tipped = canTip && tips.hasTipped;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

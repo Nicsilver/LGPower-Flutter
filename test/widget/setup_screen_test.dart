@@ -6,10 +6,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:lgpower/core/prefs.dart';
+import 'package:lgpower/core/tip_service.dart';
 import 'package:lgpower/core/tv_store.dart';
 import 'package:lgpower/net/pairing_watcher.dart';
 import 'package:lgpower/net/tv_discovery.dart';
@@ -18,6 +20,7 @@ import 'package:lgpower/theme/theme_manager.dart';
 import 'package:lgpower/ui/setup/setup_screen.dart';
 
 import 'fake_path_provider.dart';
+import 'fake_tip_store.dart';
 
 class _FakePairing {
   String? watchedIp;
@@ -77,10 +80,12 @@ Widget _app(
   PairingWatch? pairingWatch,
   bool addMode = false,
   bool hasIr = false,
+  TipService? tips,
 }) {
   return AppTheme(
     controller: controller,
     child: MaterialApp(
+      builder: (context, child) => TipScope(service: tips, child: child!),
       home: SetupScreen(
         client: client,
         discover: discover,
@@ -95,6 +100,82 @@ Widget _app(
 
 void main() {
   installFakePathProvider();
+
+  group('Settings gear', () {
+    const packageInfo = MethodChannel('dev.fluttercommunity.plus/package_info');
+
+    setUp(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(packageInfo, (call) async {
+        if (call.method == 'getAll') {
+          return <String, dynamic>{
+            'appName': 'lgpower',
+            'packageName': 'com.nic.lgpower.flutter',
+            'version': '1.40.7',
+            'buildNumber': '53',
+            'buildSignature': '',
+          };
+        }
+        return null;
+      });
+    });
+
+    testWidgets('shows while searching and after "No TVs found", not in add mode', (
+      tester,
+    ) async {
+      final (client, controller) = await _harness();
+      final never = Completer<List<FoundTv>>();
+      await tester.pumpWidget(_app(client, controller, discover: () => never.future));
+      await tester.pump();
+      expect(find.text('Searching for TVs on your network…'), findsOneWidget);
+      expect(find.byTooltip('Settings'), findsOneWidget);
+
+      final (client2, controller2) = await _harness();
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        _app(client2, controller2, discover: () async => const []),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('No TVs found on this network'), findsOneWidget);
+      expect(find.byTooltip('Settings'), findsOneWidget);
+
+      final (client3, controller3) = await _harness();
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        _app(client3, controller3, discover: () async => const [], addMode: true),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byTooltip('Settings'), findsNothing);
+    });
+
+    testWidgets('opens Settings without a TV, with the tip button and no TV-bound sections', (
+      tester,
+    ) async {
+      final (client, controller) = await _harness();
+      final tips = TipService(prefs: client.prefs, store: FakeTipStore());
+      addTearDown(tips.dispose);
+      await tips.start();
+      await tester.pumpWidget(
+        _app(client, controller, discover: () async => const [], tips: tips),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Settings'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Settings'), findsOneWidget);
+      expect(find.text('Leave a tip'), findsOneWidget);
+      expect(find.text('Release notes'), findsOneWidget);
+      expect(find.text('Theme'), findsOneWidget);
+      expect(find.text('Add a TV'), findsNothing);
+      expect(find.text('Load Apps from TV'), findsNothing);
+      expect(find.text('Show the tour'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
 
   group('IR-only skip', () {
     const link = 'Skip, use the IR service remote';
@@ -210,7 +291,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('TV FOUND'), findsOneWidget);
-      expect(find.text('LG TV'), findsOneWidget);
+      expect(find.text('TV'), findsOneWidget);
       expect(find.text('10.0.0.5'), findsOneWidget);
     });
 
@@ -227,7 +308,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('TVS FOUND'), findsOneWidget);
-      expect(find.text('LG TV'), findsNWidgets(2));
+      expect(find.text('TV'), findsNWidgets(2));
     });
   });
 
@@ -248,7 +329,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      await tester.tap(find.text('LG TV'));
+      await tester.tap(find.text('TV'));
       await tester.pump();
 
       expect(find.text('Connecting…'), findsOneWidget);
@@ -288,7 +369,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      await tester.tap(find.text('LG TV'));
+      await tester.tap(find.text('TV'));
       await tester.pump();
       await tester.pump(const Duration(seconds: 31));
 
@@ -373,7 +454,7 @@ void main() {
         expect(find.text('Add another TV'), findsOneWidget);
         expect(find.text('Living room'), findsOneWidget);
         expect(find.text('10.0.0.5 · already added'), findsOneWidget);
-        expect(find.text('LG TV'), findsOneWidget);
+        expect(find.text('TV'), findsOneWidget);
 
         await tester.tap(find.text('Living room'));
         await tester.pump();
@@ -414,7 +495,7 @@ void main() {
         await tester.pump();
         await tester.pump();
 
-        await tester.tap(find.text('LG TV'));
+        await tester.tap(find.text('TV'));
         await tester.pump();
         // The real PairingWatcher stores the key itself before reporting.
         await client.prefs.setClientKey('kb');
@@ -425,7 +506,7 @@ void main() {
         expect(find.text('Connected!'), findsOneWidget);
         expect(find.text('NAME THIS TV'), findsOneWidget);
         // Second TV, so the suggested name counts up.
-        expect(find.widgetWithText(TextField, 'LG TV 2'), findsOneWidget);
+        expect(find.widgetWithText(TextField, 'TV 2'), findsOneWidget);
 
         await tester.enterText(find.byType(TextField), 'Bedroom');
         await tester.tap(find.text('Done'));

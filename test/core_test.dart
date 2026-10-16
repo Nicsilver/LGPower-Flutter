@@ -25,7 +25,7 @@ void main() {
       expect(TvStore.list(prefs), isEmpty);
       expect(TvStore.activeId(prefs), isNull);
       expect(TvStore.activeName(prefs), 'TV Remote');
-      expect(TvStore.nextDefaultName(prefs), 'LG TV');
+      expect(TvStore.nextDefaultName(prefs), 'TV');
     });
 
     test(
@@ -41,14 +41,14 @@ void main() {
           'app_shortcuts': shortcuts,
         });
         final tv = TvStore.list(prefs).single;
-        expect(tv.name, 'LG TV');
+        expect(tv.name, 'TV');
         expect(tv.ip, '10.0.0.5');
         expect(tv.mac, 'AA:AA:AA:AA:AA:AA');
         expect(tv.clientKey, 'k');
         expect(TvStore.activeId(prefs), tv.id);
         expect(TvStore.shortcutsKey(prefs), 'app_shortcuts_${tv.id}');
         expect(prefs.getString('app_shortcuts_${tv.id}'), shortcuts);
-        expect(TvStore.nextDefaultName(prefs), 'LG TV 2');
+        expect(TvStore.nextDefaultName(prefs), 'TV 2');
       },
     );
   });
@@ -142,7 +142,7 @@ void main() {
           mac: 'CC:CC:CC:CC:CC:CC',
         );
         final after = TvStore.list(prefs).single;
-        expect(after.name, 'LG TV', reason: 'blank name keeps the old one');
+        expect(after.name, 'TV', reason: 'blank name keeps the old one');
         expect(after.ip, '10.0.0.5', reason: 'blank ip keeps the old one');
         expect(after.mac, 'CC:CC:CC:CC:CC:CC');
         expect(prefs.tvMac, 'CC:CC:CC:CC:CC:CC');

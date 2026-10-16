@@ -361,7 +361,7 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: preview.primaryText),
             ),
             const SizedBox(height: 2),
-            Text('Connected · webOS', style: TextStyle(fontSize: 13, color: preview.secondaryText)),
+            Text('Connected', style: TextStyle(fontSize: 13, color: preview.secondaryText)),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(16),

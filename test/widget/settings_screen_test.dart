@@ -136,7 +136,7 @@ void main() {
       await tester.pumpWidget(_app(client, controller));
       await tester.pump();
 
-      expect(find.text('LG TV'), findsOneWidget);
+      expect(find.text('TV'), findsOneWidget);
       expect(find.text('192.168.1.50'), findsOneWidget);
       expect(find.text('In use'), findsOneWidget);
       expect(find.text('Add a TV'), findsOneWidget);
@@ -151,7 +151,7 @@ void main() {
         await tester.pumpWidget(_app(client, controller));
         await tester.pump();
 
-        await tester.tap(find.text('LG TV'));
+        await tester.tap(find.text('TV'));
         await tester.pumpAndSettle();
 
         expect(find.byType(TvDetailScreen), findsOneWidget);
@@ -159,7 +159,7 @@ void main() {
         expect(find.text('Remove this TV'), findsOneWidget);
 
         await tester.enterText(
-          find.widgetWithText(TextField, 'LG TV'),
+          find.widgetWithText(TextField, 'TV'),
           'Bedroom',
         );
         await tester.enterText(

@@ -45,7 +45,7 @@ class ReleaseNotes {
       'Small fixes behind the scenes',
     ]),
     Release(51, '1.40.5', '2026-10-06', [
-      'LG Power is now called Power Remote',
+      'The app is now called Power Remote',
     ]),
     Release(50, '1.40.4', '2026-10-04', [
       'Settings > About shows the app version up top',
@@ -110,7 +110,7 @@ class ReleaseNotes {
     ]),
     Release(33, '1.31.0', '2026-09-10', [
       'Power widget works over Wi-Fi and Wake-on-LAN, IR only as a fallback',
-      'Widgets no longer say LG C4 in the widget picker',
+      'Widgets no longer name a specific TV model in the widget picker',
     ]),
     Release(32, '1.30.0', '2026-09-07', [
       "Connection dot follows the TV's real power state, no more flicker",
@@ -119,7 +119,7 @@ class ReleaseNotes {
       'Release notes in Settings › About',
     ]),
     Release(31, '1.29.1', '2026-09-07', [
-      'Brightness and picture mode work again on webOS 25 and 26',
+      'Brightness and picture mode work again on the newest TV firmware',
     ]),
     Release(30, '1.29.0', '2026-09-01', [
       'Numpad mode behind the 123 button',
@@ -129,7 +129,7 @@ class ReleaseNotes {
       'Pairing screen gives up after 30 seconds instead of spinning forever',
     ]),
     Release(28, '1.28.0', '2026-08-31', [
-      'Pairing fixed on webOS 25 and 26',
+      'Pairing fixed on the newest TV firmware',
       'Netflix replaces Stremio as a default shortcut',
     ]),
     Release(27, '1.27.0', '2026-08-31', [
@@ -195,7 +195,7 @@ class ReleaseNotes {
     ]),
     Release(1, '1.11.0', '2026-04-13', [
       'New keyboard sheet',
-      "Screen-off and input icons match LG's",
+      "Screen-off and input icons match the TV's own",
     ]),
     Release(1, '1.10.0', '2026-04-12', [
       'Long-press Power turns the TV off over Wi-Fi',

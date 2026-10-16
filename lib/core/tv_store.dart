@@ -81,7 +81,7 @@ class TvStore {
 
   static String nextDefaultName(Prefs prefs) {
     final n = list(prefs).length;
-    return n == 0 ? 'LG TV' : 'LG TV ${n + 1}';
+    return n == 0 ? 'TV' : 'TV ${n + 1}';
   }
 
   /// Writes the live connection prefs into the active entry.
@@ -232,7 +232,7 @@ class TvStore {
     }
     final tv = Tv(
       id: _newId(),
-      name: 'LG TV',
+      name: 'TV',
       ip: ip,
       mac: prefs.tvMac,
       clientKey: prefs.clientKey ?? '',
