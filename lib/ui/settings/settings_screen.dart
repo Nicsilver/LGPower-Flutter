@@ -87,7 +87,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final tips = TipScope.read(context);
     if (tips != null) unawaited(tips.refresh());
     _loadIrEmitter();
-    if (prefs.tourSettingsPending) {
+    // The tour points at the TV-bound sections, which limited mode leaves out
+    if (prefs.tourSettingsPending && !widget.limited) {
       prefs.setTourSettingsPending(false);
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => unawaited(_runTour()),

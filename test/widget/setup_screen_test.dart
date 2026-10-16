@@ -174,6 +174,32 @@ void main() {
       expect(find.text('Load Apps from TV'), findsNothing);
       expect(find.text('Show the tour'), findsNothing);
       expect(tester.takeException(), isNull);
+
+      tester.state<NavigatorState>(find.byType(Navigator).last).pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(SetupScreen), findsOneWidget);
+      expect(find.byTooltip('Settings'), findsOneWidget);
+    });
+
+    testWidgets('hides while pairing', (tester) async {
+      final (client, controller) = await _harness();
+      final fake = _FakePairing();
+      await tester.pumpWidget(
+        _app(
+          client,
+          controller,
+          discover: () async => _found(['10.0.0.5']),
+          pairingWatch: fake.watch,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byTooltip('Settings'), findsOneWidget);
+
+      await tester.tap(find.text('TV'));
+      await tester.pump();
+      expect(find.text('Connecting…'), findsOneWidget);
+      expect(find.byTooltip('Settings'), findsNothing);
     });
   });
 
