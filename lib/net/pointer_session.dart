@@ -3,27 +3,65 @@ import 'dart:io';
 
 import '../core/prefs.dart';
 import 'ssap_messages.dart';
+import 'ws_connect.dart';
 
 const String _pointerSocketUri =
     'ssap://com.webos.service.networkinput/getPointerInputSocket';
+
+enum PointerState { connecting, ready, dead }
+
+class _Frame {
+  _Frame.raw(this.kind, this.raw)
+      : dx = 0,
+        dy = 0;
+  _Frame.delta(this.kind, this.dx, this.dy) : raw = null;
+
+  final String kind;
+  final String? raw;
+  int dx;
+  int dy;
+
+  String encode() => raw ?? 'type:$kind\ndx:$dx\ndy:$dy\n\n';
+}
 
 /// Separate persistent connection for pointer/navigation input -- a
 /// different WebSocket URL obtained at runtime via [_pointerSocketUri], not
 /// the SSAP command socket. Handshake: register on a control socket, ask
 /// for the pointer socket path, close the control socket, then open a
 /// second plain (unregistered) socket to that path.
+///
+/// Frames sent while the handshake is still running are queued in call order
+/// and flushed once the socket opens, so a caller never has to wait for (or
+/// replace) a connecting session.
 class PointerSession {
-  PointerSession(this._ip, this._prefs) {
+  PointerSession(
+    this.ip,
+    this._prefs, {
+    SocketConnector? connector,
+    this.connectGrace = const Duration(seconds: 10),
+    Duration handshakeTimeout = const Duration(seconds: 8),
+  })  : createdAt = DateTime.now(),
+        _connector = connector ?? connectTrustAll {
+    _handshakeTimer = Timer(handshakeTimeout, _fail);
     _connect();
   }
 
-  final String _ip;
+  final String ip;
   final Prefs _prefs;
+  final SocketConnector _connector;
+  final DateTime createdAt;
+  final Duration connectGrace;
+
+  static const int _maxQueued = 200;
+
+  PointerState _state = PointerState.connecting;
+  PointerState get state => _state;
 
   WebSocket? _controlWs;
   WebSocket? _pointerWs;
-  bool _alive = false;
+  Timer? _handshakeTimer;
   final _readyCompleter = Completer<void>();
+  final _queue = <_Frame>[];
 
   // Closing the control socket ourselves (once we have the pointer socket
   // path) fires the same onDone as an unexpected drop would. Without this
@@ -32,17 +70,25 @@ class PointerSession {
   // became ready.
   bool _controlClosingIntentionally = false;
 
-  bool get isAlive => _alive && _pointerWs != null;
+  bool get isAlive => _state == PointerState.ready && _pointerWs != null;
 
-  HttpClient _trustAllClient() =>
-      HttpClient()..badCertificateCallback = (cert, host, port) => true;
+  /// A session mid-handshake is shared rather than replaced: a d-pad held
+  /// down fires every 120 ms, and replacing the session on each press would
+  /// restart the two TLS handshakes every time so no press ever lands.
+  bool get isUsable => switch (_state) {
+        PointerState.ready => _pointerWs != null,
+        PointerState.connecting =>
+          DateTime.now().difference(createdAt) < connectGrace,
+        PointerState.dead => false,
+      };
 
   Future<void> _connect() async {
     try {
-      final ws = await WebSocket.connect(
-        'wss://$_ip:3001',
-        customClient: _trustAllClient(),
-      ).timeout(const Duration(seconds: 3));
+      final ws = await _connector('wss://$ip:3001').timeout(const Duration(seconds: 3));
+      if (_state == PointerState.dead) {
+        unawaited(ws.close(1000).catchError((_) {}));
+        return;
+      }
       _controlWs = ws;
       ws.listen(
         _onControlMessage,
@@ -52,7 +98,7 @@ class PointerSession {
       );
       ws.add(encodeSsapMessage(buildRegistration(_prefs.clientKey)));
     } catch (_) {
-      _finishNotReady();
+      _fail();
     }
   }
 
@@ -85,7 +131,7 @@ class PointerSession {
       final socketPath = payload?['socketPath'] as String?;
       _closeControl();
       if (socketPath == null || socketPath.isEmpty) {
-        _finishNotReady();
+        _fail();
         return;
       }
       await _openPointerSocket(socketPath);
@@ -93,8 +139,7 @@ class PointerSession {
     }
 
     if (type == 'error') {
-      _closeControl();
-      _finishNotReady();
+      _fail();
     }
   }
 
@@ -108,85 +153,117 @@ class PointerSession {
 
   Future<void> _openPointerSocket(String url) async {
     try {
-      final ws = await WebSocket.connect(
-        url,
-        customClient: _trustAllClient(),
-      ).timeout(const Duration(seconds: 3));
+      final ws = await _connector(url).timeout(const Duration(seconds: 3));
+      if (_state == PointerState.dead) {
+        unawaited(ws.close(1000).catchError((_) {}));
+        return;
+      }
       _pointerWs = ws;
-      _alive = true;
       ws.listen(
         (_) {},
         onDone: _onPointerClosed,
         onError: (_) => _onPointerClosed(),
         cancelOnError: true,
       );
-      _finishReady();
+      _handshakeTimer?.cancel();
+      _state = PointerState.ready;
+      _flushQueue();
+      if (!_readyCompleter.isCompleted) _readyCompleter.complete();
     } catch (_) {
-      _alive = false;
-      _pointerWs = null;
-      _finishNotReady();
+      _fail();
     }
   }
 
   void _onPointerClosed() {
-    _alive = false;
     _pointerWs = null;
+    _fail();
   }
 
   void _onControlDropped() {
     _controlWs = null;
     // Our own close() on handshake progression (or on error) already deals
     // with readiness explicitly; only an unexpected drop counts as failure.
-    if (!_controlClosingIntentionally && !_readyCompleter.isCompleted) {
-      _finishNotReady();
+    if (!_controlClosingIntentionally && _state == PointerState.connecting) {
+      _fail();
     }
   }
 
-  void _finishReady() {
+  void _fail() {
+    if (_state == PointerState.dead) return;
+    _state = PointerState.dead;
+    _handshakeTimer?.cancel();
+    _queue.clear();
     if (!_readyCompleter.isCompleted) _readyCompleter.complete();
+    _closeControl();
+    final ws = _pointerWs;
+    _pointerWs = null;
+    try {
+      ws?.close(1000);
+    } catch (_) {}
   }
 
-  void _finishNotReady() {
-    _alive = false;
-    if (!_readyCompleter.isCompleted) _readyCompleter.complete();
-  }
-
+  /// Completes once the handshake has finished; true only if the session came
+  /// up. Does not extend the connect attempt itself.
   Future<bool> waitUntilReady({int timeoutSecs = 6}) async {
     try {
       await _readyCompleter.future.timeout(Duration(seconds: timeoutSecs));
     } on TimeoutException {
       return false;
     }
-    return _alive;
+    return _state == PointerState.ready;
   }
 
   // No `down:` field, no drag, no left/right button field -- this app never
   // sends them (spec §1.5).
-  void sendKey(String keyCode) => _send('type:button\nname:$keyCode\n\n');
+  void sendKey(String keyCode) => _submit(_Frame.raw('button', 'type:button\nname:$keyCode\n\n'));
 
-  void move(double dx, double dy) =>
-      _send('type:move\ndx:${dx.toInt()}\ndy:${dy.toInt()}\n\n');
+  void move(double dx, double dy) => _submitDelta('move', dx.toInt(), dy.toInt());
 
-  void scroll(double dx, double dy) =>
-      _send('type:scroll\ndx:${dx.toInt()}\ndy:${dy.toInt()}\n\n');
+  void scroll(double dx, double dy) => _submitDelta('scroll', dx.toInt(), dy.toInt());
 
-  void click() => _send('type:click\n\n');
+  void click() => _submit(_Frame.raw('click', 'type:click\n\n'));
 
-  void _send(String frame) {
-    if (!isAlive) return;
-    try {
-      _pointerWs!.add(frame);
-    } catch (_) {
-      _alive = false;
+  void _submitDelta(String kind, int dx, int dy) {
+    if (_state == PointerState.connecting && _queue.isNotEmpty && _queue.last.kind == kind) {
+      // Folding consecutive queued moves keeps the cursor travel but turns a
+      // burst of tiny frames into one when the socket opens.
+      _queue.last
+        ..dx += dx
+        ..dy += dy;
+      return;
+    }
+    _submit(_Frame.delta(kind, dx, dy));
+  }
+
+  void _submit(_Frame frame) {
+    switch (_state) {
+      case PointerState.ready:
+        _write(frame);
+      case PointerState.connecting:
+        if (_queue.length >= _maxQueued) _queue.removeAt(0);
+        _queue.add(frame);
+      case PointerState.dead:
+        break;
     }
   }
 
-  void close() {
-    _alive = false;
-    try {
-      _pointerWs?.close(1000);
-    } catch (_) {}
-    _pointerWs = null;
-    _closeControl();
+  void _flushQueue() {
+    final frames = List.of(_queue);
+    _queue.clear();
+    for (final f in frames) {
+      _write(f);
+    }
   }
+
+  void _write(_Frame frame) {
+    final ws = _pointerWs;
+    if (ws == null) return;
+    try {
+      ws.add(frame.encode());
+    } catch (_) {
+      _fail();
+    }
+  }
+
+  void close() => _fail();
 }

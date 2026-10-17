@@ -144,13 +144,20 @@ const Map<String, int> brandColors = {
 };
 
 class WebOsClient {
-  WebOsClient(this.prefs) {
+  WebOsClient(
+    this.prefs, {
+    CommandSession Function(String ip, Prefs prefs)? commandSessionFactory,
+    PointerSession Function(String ip, Prefs prefs)? pointerSessionFactory,
+  })  : _commandSessionFactory = commandSessionFactory ?? CommandSession.new,
+        _pointerSessionFactory = pointerSessionFactory ?? PointerSession.new {
     // Fire-and-forget: primes the synchronous cachedIconFile() lookup.
     // Until this resolves, cachedIconFile() returns null (see its doc).
     unawaited(_primeIconDir());
   }
 
   final Prefs prefs;
+  final CommandSession Function(String ip, Prefs prefs) _commandSessionFactory;
+  final PointerSession Function(String ip, Prefs prefs) _pointerSessionFactory;
 
   CommandSession? _sharedCommandSession;
   PointerSession? _sharedPointerSession;
@@ -165,11 +172,33 @@ class WebOsClient {
 
   CommandSession _commandSession() {
     final existing = _sharedCommandSession;
-    if (existing != null && existing.isUsable) return existing;
+    // The IP check matters while a TV is being added or its address edited:
+    // the old TV's live session must not answer for the new one.
+    if (existing != null && existing.ip == tvIp && existing.isUsable) return existing;
     existing?.close();
-    final session = CommandSession(tvIp, prefs);
+    final session = _commandSessionFactory(tvIp, prefs);
     _sharedCommandSession = session;
     return session;
+  }
+
+  /// The one pointer session that d-pad keys and the touchpad share. A live
+  /// or still-connecting session is reused (frames sent meanwhile are
+  /// queued by the session); a new one starts only when there is none, it
+  /// died, it outlived its connect grace, or the TV's address changed.
+  PointerSession pointerSession() {
+    final existing = _sharedPointerSession;
+    if (existing != null && existing.ip == tvIp && existing.isUsable) return existing;
+    existing?.close();
+    final session = _pointerSessionFactory(tvIp, prefs);
+    _sharedPointerSession = session;
+    return session;
+  }
+
+  /// Opens the pointer connection ahead of the first key or touch so the
+  /// two TLS handshakes are already done when the user reaches for the remote.
+  void warmPointer() {
+    if (tvIp.isEmpty) return;
+    pointerSession();
   }
 
   void resetConnection() {
@@ -193,35 +222,15 @@ class WebOsClient {
     };
   }
 
-  /// Shared session with strict `isAlive` (unlike CommandSession's grace
-  /// window) -- a mid-handshake pointer session is not reused.
+  /// The key is handed to the shared pointer session before any await, so
+  /// presses keep their order even while the session is still connecting; the
+  /// result only reports whether that session came up.
   Future<Result> pressKey(String keyCode) async {
     if (tvIp.isEmpty) return const CmdError('No TV IP configured');
-    final existing = _sharedPointerSession;
-    PointerSession session;
-    if (existing != null && existing.isAlive) {
-      session = existing;
-    } else {
-      existing?.close();
-      session = PointerSession(tvIp, prefs);
-      _sharedPointerSession = session;
-    }
-    final ready = await session.waitUntilReady();
-    if (ready) {
-      session.sendKey(keyCode);
-      return const Success();
-    }
-    if (identical(_sharedPointerSession, session)) {
-      _sharedPointerSession = null;
-    }
+    final session = pointerSession();
+    session.sendKey(keyCode);
+    if (await session.waitUntilReady()) return const Success();
     return const CmdError('Timeout. Is the TV on and reachable?');
-  }
-
-  /// A brand-new dedicated session per touch gesture; the caller closes it.
-  Future<PointerSession> openPointerSession() async {
-    final session = PointerSession(tvIp, prefs);
-    await session.waitUntilReady();
-    return session;
   }
 
   Future<Result> turnOff() => _execute('ssap://system/turnOff');

@@ -208,6 +208,10 @@ class RemoteController extends ChangeNotifier {
         currentScreenOff = isOn && screenOff;
     }
     final nowConnected = tvConnected;
+    // Idempotent: reuses the live pointer session, and reopens one that
+    // dropped while the TV was off, so the first d-pad press or touch finds
+    // it ready.
+    if (nowConnected) client.warmPointer();
     if (nowConnected && !wasConnected) {
       _startLevelsPoll();
       // Refreshes the cached input list so the after-wake picker has it with

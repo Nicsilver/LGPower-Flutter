@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../core/prefs.dart';
 import 'ssap_messages.dart';
+import 'ws_connect.dart';
 import 'wol.dart' show macList;
 
 enum CmdState { connecting, ready, needsPairing, dead }
@@ -56,15 +57,22 @@ String mergeMacs(String saved, List<String> found) {
 /// and killing the previous one meant nothing ever finished connecting
 /// under load.
 class CommandSession {
-  CommandSession(this._ip, this._prefs) : createdAt = DateTime.now() {
+  CommandSession(
+    this.ip,
+    this._prefs, {
+    SocketConnector? connector,
+    this.connectGrace = const Duration(seconds: 10),
+  })  : _connector = connector ?? connectTrustAll,
+        createdAt = DateTime.now() {
     _connect();
   }
 
-  final String _ip;
+  final String ip;
   final Prefs _prefs;
+  final SocketConnector _connector;
   final DateTime createdAt;
+  final Duration connectGrace;
 
-  static const _connectGrace = Duration(seconds: 10);
   static const _readyWait = Duration(seconds: 8);
 
   CmdState _state = CmdState.connecting;
@@ -88,7 +96,7 @@ class CommandSession {
       case CmdState.needsPairing:
         return _ws != null;
       case CmdState.connecting:
-        return DateTime.now().difference(createdAt) < _connectGrace;
+        return DateTime.now().difference(createdAt) < connectGrace;
       case CmdState.dead:
         return false;
     }
@@ -96,12 +104,12 @@ class CommandSession {
 
   Future<void> _connect() async {
     try {
-      final client = HttpClient()
-        ..badCertificateCallback = (cert, host, port) => true;
-      final ws = await WebSocket.connect(
-        'wss://$_ip:3001',
-        customClient: client,
-      ).timeout(const Duration(seconds: 3));
+      final ws = await _connector('wss://$ip:3001').timeout(const Duration(seconds: 3));
+      if (_state == CmdState.dead) {
+        // close() ran while the connect was in flight; nothing owns this socket.
+        unawaited(ws.close(1000).catchError((_) {}));
+        return;
+      }
       ws.pingInterval = const Duration(seconds: 15);
       _ws = ws;
       ws.listen(_onMessage, onDone: _onDone, onError: _onError, cancelOnError: true);

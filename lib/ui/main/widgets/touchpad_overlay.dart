@@ -30,7 +30,6 @@ class TouchpadController extends ChangeNotifier {
   bool isLocked = false;
   Offset center = Offset.zero;
 
-  PointerSession? _session;
   bool _hasMoved = false;
   Offset _lastGlobal = Offset.zero;
   double _moveAccumulator = 0;
@@ -67,15 +66,16 @@ class TouchpadController extends ChangeNotifier {
     _lastGlobal = globalPointer;
     reveal.value = 0;
     notifyListeners();
-    unawaited(_openSession());
+    client.warmPointer();
     _lockTimer?.cancel();
     _lockTimer = Timer(const Duration(milliseconds: 600), _onLockTimeout);
     unawaited(reveal.animateTo(1, duration: const Duration(milliseconds: 600), curve: Curves.linear));
   }
 
-  Future<void> _openSession() async {
-    _session = await client.openPointerSession();
-  }
+  // Looked up per frame rather than held for the gesture: the shared session
+  // can be replaced under a long lock (TV dropped it), and frames sent to a
+  // connecting one are queued, not lost.
+  PointerSession? get _pointer => client.tvIp.isEmpty ? null : client.pointerSession();
 
   void _onLockTimeout() {
     if (_hasMoved || !active) return;
@@ -100,7 +100,7 @@ class TouchpadController extends ChangeNotifier {
       Haptics.selection();
       _moveAccumulator = 0;
     }
-    _session?.move(dx, dy);
+    _pointer?.move(dx, dy);
   }
 
   void onButtonUp() {
@@ -115,8 +115,6 @@ class TouchpadController extends ChangeNotifier {
     _hasMoved = false;
     reveal.stop();
     reveal.value = 0;
-    _session?.close();
-    _session = null;
     _pointers.clear();
     _scrolling = false;
     _overlayDragging = false;
@@ -155,7 +153,7 @@ class TouchpadController extends ChangeNotifier {
       _scrollCarry = total - units * _scrollSensitivity;
       _lastScrollY = midY;
       // Sign inversion: dragging down scrolls TV content up (spec §10).
-      if (units != 0) _session?.scroll(0, -units.toDouble());
+      if (units != 0) _pointer?.scroll(0, -units.toDouble());
       return;
     }
     if (prev == null || _pointers.length != 1) return;
@@ -177,7 +175,7 @@ class TouchpadController extends ChangeNotifier {
       _dxCarry = totalDx - sendDx;
       _dyCarry = totalDy - sendDy;
       if (sendDx != 0 || sendDy != 0) {
-        _session?.move(sendDx.toDouble(), sendDy.toDouble());
+        _pointer?.move(sendDx.toDouble(), sendDy.toDouble());
       }
     }
   }
@@ -189,7 +187,7 @@ class TouchpadController extends ChangeNotifier {
     if (_pointers.isEmpty) {
       if (wasSingle && !_overlayDragging && !_scrolling) {
         Haptics.light();
-        _session?.click();
+        _pointer?.click();
       }
       _scrolling = false;
       _overlayDragging = false;
@@ -203,19 +201,18 @@ class TouchpadController extends ChangeNotifier {
 
   void overlayBack() {
     Haptics.light();
-    _session?.sendKey('BACK');
+    _pointer?.sendKey('BACK');
   }
 
   void overlayClick() {
     Haptics.light();
-    _session?.click();
+    _pointer?.click();
   }
 
   @override
   void dispose() {
     _lockTimer?.cancel();
     reveal.dispose();
-    _session?.close();
     super.dispose();
   }
 }
