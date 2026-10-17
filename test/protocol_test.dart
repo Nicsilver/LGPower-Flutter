@@ -140,8 +140,23 @@ void main() {
       final client = WebOsClient(prefs);
       addTearDown(client.resetConnection);
 
+      // The pointer session never registers without a stored key (that would
+      // pop a pairing prompt on the TV); the command session pairs first, as
+      // it does in the app.
+      expect(await client.getVolume(), isNotNull);
+      expect(prefs.clientKey, isNotEmpty);
+
       final result = await client.pressKey('UP');
       expect(result, isA<Success>());
+    });
+
+    test('pressKey without a stored key reports NeedsPairing', () async {
+      final prefs = await _freshPrefs();
+      final client = WebOsClient(prefs);
+      addTearDown(client.resetConnection);
+
+      expect(prefs.clientKey, isNull);
+      expect(await client.pressKey('UP'), isA<NeedsPairing>());
     });
   });
 
