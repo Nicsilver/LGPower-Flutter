@@ -84,8 +84,14 @@ class TvStore {
     return n == 0 ? 'TV' : 'TV ${n + 1}';
   }
 
+  // Between beginAdd and addFromLive/cancelAdd the live prefs hold the TV
+  // being added, not the active one. The remote stays mounted under the Add TV
+  // screen and resumes when the phone locks and unlocks mid-pairing.
+  static bool _adding = false;
+
   /// Writes the live connection prefs into the active entry.
   static void syncFromLive(Prefs prefs) {
+    if (_adding) return;
     _migrate(prefs);
     final id = prefs.getString(_active);
     if (id == null) return;
@@ -106,6 +112,7 @@ class TvStore {
 
   /// Adds the live connection prefs as a new TV and makes it the active one.
   static Tv addFromLive(Prefs prefs, String name, {String udn = ''}) {
+    _adding = false;
     final tv = Tv(
       id: _newId(),
       name: name.trim().isEmpty ? nextDefaultName(prefs) : name.trim(),
@@ -138,7 +145,9 @@ class TvStore {
   /// Clears the live prefs so a new pairing starts clean; the active entry
   /// keeps its copy.
   static void beginAdd(Prefs prefs) {
+    _adding = false;
     syncFromLive(prefs);
+    _adding = true;
     prefs.remove('tv_ip');
     prefs.remove('tv_mac');
     prefs.remove('client_key');
@@ -146,6 +155,7 @@ class TvStore {
 
   /// Undo of [beginAdd] when the user backs out before pairing.
   static void cancelAdd(Prefs prefs) {
+    _adding = false;
     _migrate(prefs);
     final id = prefs.getString(_active);
     if (id == null) return;

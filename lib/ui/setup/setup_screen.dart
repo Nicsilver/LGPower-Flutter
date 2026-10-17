@@ -103,11 +103,22 @@ class _SetupScreenState extends State<SetupScreen> {
 
   @override
   void dispose() {
+    _leave();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  bool _left = false;
+
+  // Runs when the pop starts, not only at dispose: the screen below resumes
+  // (and copies the live prefs into the active TV) while this one is still
+  // mounted for its exit animation.
+  void _leave() {
+    if (_left) return;
+    _left = true;
     _uiTimeout?.cancel();
     _stopPairing?.call();
     if (widget.addMode && !_added) TvStore.cancelAdd(widget.client.prefs);
-    _nameController.dispose();
-    super.dispose();
   }
 
   Future<void> _startDiscovery() async {
@@ -264,7 +275,11 @@ class _SetupScreenState extends State<SetupScreen> {
   Widget build(BuildContext context) {
     final theme = AppTheme.of(context);
     final backButton = IosBackButton.visible(context);
-    return Scaffold(
+    return PopScope<Object?>(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) _leave();
+      },
+      child: Scaffold(
       backgroundColor: theme.windowBg,
       body: Stack(
         children: [
@@ -340,6 +355,7 @@ class _SetupScreenState extends State<SetupScreen> {
               ),
             ),
         ],
+      ),
       ),
     );
   }

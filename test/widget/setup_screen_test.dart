@@ -544,6 +544,72 @@ void main() {
       expect(tvs.single.mac, 'AA:AA:AA:AA:AA:AA');
     });
 
+    // The remote's push future completes when the pop starts, while the setup
+    // screen is still mounted for its exit animation, and the remote then
+    // runs onResume (syncFromLive) straight away.
+    testWidgets('popping or locking at the name step leaves the active TV untouched', (
+      tester,
+    ) async {
+      final (client, controller) = await _harness(saved);
+      final fake = _FakePairing();
+      final navKey = GlobalKey<NavigatorState>();
+      String? ipOnReturn;
+      await tester.pumpWidget(
+        AppTheme(
+          controller: controller,
+          child: MaterialApp(
+            navigatorKey: navKey,
+            builder: (context, child) => TipScope(service: null, child: child!),
+            home: Builder(
+              builder: (context) => TextButton(
+                onPressed: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SetupScreen(
+                        client: client,
+                        discover: () async => _found(['10.0.0.6']),
+                        pairingWatch: fake.watch,
+                        addMode: true,
+                        fingerprint: (_) async => null,
+                        hasIrEmitter: () async => false,
+                      ),
+                    ),
+                  );
+                  ipOnReturn = client.prefs.tvIp;
+                  TvStore.syncFromLive(client.prefs);
+                },
+                child: const Text('add'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('add'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('TV'));
+      await tester.pump();
+      await client.prefs.setClientKey('kb');
+      fake.onPaired!('kb');
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('NAME THIS TV'), findsOneWidget);
+      // The phone locking and unlocking at the name step resumes the remote.
+      TvStore.syncFromLive(client.prefs);
+
+      navKey.currentState!.pop();
+      await tester.pumpAndSettle();
+
+      expect(ipOnReturn, '10.0.0.5');
+      expect(client.prefs.tvIp, '10.0.0.5');
+      expect(client.prefs.clientKey, 'ka');
+      final tvs = TvStore.list(client.prefs);
+      expect(tvs, hasLength(1));
+      expect(tvs.single.ip, '10.0.0.5');
+      expect(tvs.single.clientKey, 'ka');
+      expect(tvs.single.mac, 'AA:AA:AA:AA:AA:AA');
+    });
+
     testWidgets(
       'pairing in add mode ends in the name step and saves a second TV with default shortcuts',
       (tester) async {
