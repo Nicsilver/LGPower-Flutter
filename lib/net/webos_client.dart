@@ -148,6 +148,7 @@ class WebOsClient {
     this.prefs, {
     CommandSession Function(String ip, Prefs prefs)? commandSessionFactory,
     PointerSession Function(String ip, Prefs prefs)? pointerSessionFactory,
+    this.pointerRetryBackoff = const Duration(seconds: 1),
   })  : _commandSessionFactory = commandSessionFactory ?? CommandSession.new,
         _pointerSessionFactory = pointerSessionFactory ?? PointerSession.new {
     // Fire-and-forget: primes the synchronous cachedIconFile() lookup.
@@ -158,6 +159,11 @@ class WebOsClient {
   final Prefs prefs;
   final CommandSession Function(String ip, Prefs prefs) _commandSessionFactory;
   final PointerSession Function(String ip, Prefs prefs) _pointerSessionFactory;
+
+  /// After a pointer handshake fails, callers get the dead session back for
+  /// this long instead of each touchpad frame starting a new connect against
+  /// a TV that is in standby.
+  final Duration pointerRetryBackoff;
 
   CommandSession? _sharedCommandSession;
   PointerSession? _sharedPointerSession;
@@ -175,9 +181,18 @@ class WebOsClient {
     // The IP check matters while a TV is being added or its address edited:
     // the old TV's live session must not answer for the new one.
     if (existing != null && existing.ip == tvIp && existing.isUsable) return existing;
-    existing?.close();
+    if (existing != null) {
+      existing.close();
+      _dropPointer();
+    }
     final session = _commandSessionFactory(tvIp, prefs);
     _sharedCommandSession = session;
+    // The pointer socket has no ping of its own, so the command socket's
+    // keepalive is what notices a silent Wi-Fi drop; a pointer session that
+    // outlived it can look usable while its frames vanish.
+    unawaited(session.awaitDeath().then((_) {
+      if (identical(_sharedCommandSession, session)) _dropPointer();
+    }));
     return session;
   }
 
@@ -187,7 +202,13 @@ class WebOsClient {
   /// died, it outlived its connect grace, or the TV's address changed.
   PointerSession pointerSession() {
     final existing = _sharedPointerSession;
-    if (existing != null && existing.ip == tvIp && existing.isUsable) return existing;
+    if (existing != null && existing.ip == tvIp) {
+      if (existing.isUsable) return existing;
+      final failedAt = existing.handshakeFailedAt;
+      if (failedAt != null && DateTime.now().difference(failedAt) < pointerRetryBackoff) {
+        return existing;
+      }
+    }
     existing?.close();
     final session = _pointerSessionFactory(tvIp, prefs);
     _sharedPointerSession = session;
@@ -201,9 +222,13 @@ class WebOsClient {
     pointerSession();
   }
 
-  void resetConnection() {
+  void _dropPointer() {
     _sharedPointerSession?.close();
     _sharedPointerSession = null;
+  }
+
+  void resetConnection() {
+    _dropPointer();
     _sharedCommandSession?.close();
     _sharedCommandSession = null;
   }

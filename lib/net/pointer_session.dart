@@ -13,10 +13,14 @@ enum PointerState { connecting, ready, dead }
 class _Frame {
   _Frame.raw(this.kind, this.raw)
       : dx = 0,
-        dy = 0;
-  _Frame.delta(this.kind, this.dx, this.dy) : raw = null;
+        dy = 0,
+        queuedAt = DateTime.now();
+  _Frame.delta(this.kind, this.dx, this.dy)
+      : raw = null,
+        queuedAt = DateTime.now();
 
   final String kind;
+  final DateTime queuedAt;
   final String? raw;
   int dx;
   int dy;
@@ -39,7 +43,8 @@ class PointerSession {
     this._prefs, {
     SocketConnector? connector,
     this.connectGrace = const Duration(seconds: 10),
-    Duration handshakeTimeout = const Duration(seconds: 8),
+    Duration handshakeTimeout = defaultHandshakeTimeout,
+    this.staleAfter = const Duration(milliseconds: 1500),
   })  : createdAt = DateTime.now(),
         _connector = connector ?? connectTrustAll {
     _handshakeTimer = Timer(handshakeTimeout, _fail);
@@ -52,10 +57,24 @@ class PointerSession {
   final DateTime createdAt;
   final Duration connectGrace;
 
+  /// Equal to [waitUntilReady]'s default on purpose: a press that has
+  /// reported a timeout must never have its key sent by a session that
+  /// opens afterwards.
+  static const Duration defaultHandshakeTimeout = Duration(seconds: 6);
+
+  /// Queued input older than this is dropped on flush: a key held through a
+  /// slow handshake would otherwise fire as a burst and overshoot.
+  final Duration staleAfter;
+
   static const int _maxQueued = 200;
 
   PointerState _state = PointerState.connecting;
   PointerState get state => _state;
+
+  /// Set when the handshake itself failed (a standby TV accepts the upgrade
+  /// and then closes it), not when an established session dropped or was
+  /// closed by us.
+  DateTime? handshakeFailedAt;
 
   WebSocket? _controlWs;
   WebSocket? _pointerWs;
@@ -188,8 +207,11 @@ class PointerSession {
     }
   }
 
-  void _fail() {
+  void _fail({bool byCaller = false}) {
     if (_state == PointerState.dead) return;
+    if (_state == PointerState.connecting && !byCaller) {
+      handshakeFailedAt = DateTime.now();
+    }
     _state = PointerState.dead;
     _handshakeTimer?.cancel();
     _queue.clear();
@@ -204,9 +226,9 @@ class PointerSession {
 
   /// Completes once the handshake has finished; true only if the session came
   /// up. Does not extend the connect attempt itself.
-  Future<bool> waitUntilReady({int timeoutSecs = 6}) async {
+  Future<bool> waitUntilReady({Duration timeout = defaultHandshakeTimeout}) async {
     try {
-      await _readyCompleter.future.timeout(Duration(seconds: timeoutSecs));
+      await _readyCompleter.future.timeout(timeout);
     } on TimeoutException {
       return false;
     }
@@ -250,7 +272,9 @@ class PointerSession {
   void _flushQueue() {
     final frames = List.of(_queue);
     _queue.clear();
+    final cutoff = DateTime.now().subtract(staleAfter);
     for (final f in frames) {
+      if (f.kind != 'click' && f.queuedAt.isBefore(cutoff)) continue;
       _write(f);
     }
   }
@@ -265,5 +289,5 @@ class PointerSession {
     }
   }
 
-  void close() => _fail();
+  void close() => _fail(byCaller: true);
 }

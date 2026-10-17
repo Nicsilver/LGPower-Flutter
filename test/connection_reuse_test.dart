@@ -319,4 +319,106 @@ void main() {
       expect(tv.controlConnections, 2);
     });
   });
+
+  group('pointer session timing', () {
+    test('input queued longer than staleAfter is not flushed, fresh input and clicks are', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 250)),
+          staleAfter: const Duration(milliseconds: 300));
+      addTearDown(session.close);
+
+      session.sendKey('UP');
+      session.move(5, 5);
+      session.click();
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      session.sendKey('DOWN');
+
+      expect(await session.waitUntilReady(), isTrue);
+      await _until(() => tv.pointerFrames.length >= 2);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(tv.pointerFrames, ['type:click\n\n', 'type:button\nname:DOWN\n\n']);
+    });
+
+    test('a session that opens after its handshake timeout never sends the queued key', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 200)),
+          handshakeTimeout: const Duration(milliseconds: 150));
+      addTearDown(session.close);
+
+      session.sendKey('UP');
+      expect(await session.waitUntilReady(), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(tv.pointerFrames, isEmpty);
+      expect(tv.pointerConnections, 0);
+    });
+
+    test('the default handshake timeout matches the press timeout', () {
+      expect(PointerSession.defaultHandshakeTimeout, const Duration(seconds: 6));
+    });
+
+    test('after a failed handshake the client hands back the dead session until the backoff ends', () async {
+      final prefs = await _prefs();
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: const Duration(milliseconds: 250),
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p,
+            connector: (_) => Future<WebSocket>.error(const SocketException('refused')));
+      });
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      await _until(() => first.state == PointerState.dead);
+      for (var i = 0; i < 5; i++) {
+        final s = client.pointerSession();
+        expect(s, same(first));
+        s.move(1, 1);
+      }
+      expect(created, 1);
+      expect(await client.pressKey('UP'), isA<CmdError>());
+      expect(created, 1);
+
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(client.pointerSession(), isNot(same(first)));
+      expect(created, 2);
+    });
+
+    test('an established pointer session that dropped is replaced without waiting', () async {
+      final prefs = await _prefs();
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: const Duration(seconds: 30),
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p, connector: tv.connector());
+      });
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      expect(await first.waitUntilReady(), isTrue);
+      await _until(() => tv.pointerConnections == 1);
+      tv.dropPointerSockets();
+      await _until(() => !first.isAlive);
+      expect(client.pointerSession(), isNot(same(first)));
+      expect(created, 2);
+    });
+
+    test('the command session dying drops the shared pointer session', () async {
+      final prefs = await _prefs();
+      final client = WebOsClient(prefs,
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p, connector: tv.connector()),
+          commandSessionFactory: (ip, p) => CommandSession(ip, p,
+              connector: (_) => Future<WebSocket>.error(const SocketException('gone'))));
+      addTearDown(client.resetConnection);
+
+      final pointer = client.pointerSession();
+      expect(await pointer.waitUntilReady(), isTrue);
+      expect(pointer.isUsable, isTrue);
+
+      expect(await client.getVolume(), isNull);
+      await _until(() => pointer.state == PointerState.dead);
+      expect(client.pointerSession(), isNot(same(pointer)));
+    });
+  });
 }
