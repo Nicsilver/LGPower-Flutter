@@ -17,6 +17,7 @@ import 'package:lgpower/net/ws_connect.dart';
 class _FakeTv {
   late HttpServer _server;
   int controlConnections = 0;
+  int openControlSockets = 0;
   int pointerConnections = 0;
   final pointerFrames = <String>[];
   final _pointerSockets = <WebSocket>[];
@@ -34,6 +35,7 @@ class _FakeTv {
         return;
       }
       controlConnections++;
+      openControlSockets++;
       ws.listen((raw) {
         final msg = jsonDecode(raw as String) as Map<String, dynamic>;
         final id = msg['id'];
@@ -54,7 +56,7 @@ class _FakeTv {
                       };
             ws.add(jsonEncode({'type': 'response', 'id': id, 'payload': payload}));
         }
-      });
+      }, onDone: () => openControlSockets--);
     });
   }
 
@@ -240,6 +242,43 @@ void main() {
       expect(second, isNot(same(first)));
       expect(second.ip, '127.0.0.2');
       expect(first.state, PointerState.dead);
+    });
+  });
+
+  group('reset and close', () {
+    test('a reset mid-connect drops queued keys instead of flushing them late', () async {
+      final prefs = await _prefs();
+      final client = WebOsClient(prefs, pointerSessionFactory: (ip, p) {
+        return PointerSession(ip, p,
+            connector: tv.connector(delay: const Duration(milliseconds: 150)));
+      });
+      addTearDown(client.resetConnection);
+
+      final presses = [client.pressKey('VOLUMEUP'), client.pressKey('VOLUMEUP')];
+      client.resetConnection();
+
+      expect(await Future.wait(presses), everyElement(isA<CmdError>()));
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(tv.pointerConnections, 0);
+      expect(_buttons(tv), isEmpty);
+    });
+
+    test('closing a ready command session closes its socket on the TV', () async {
+      final session = CommandSession('127.0.0.1', await _prefs(), connector: tv.connector());
+      await session.awaitReady();
+      expect(session.state, CmdState.ready);
+      await _until(() => tv.openControlSockets == 1);
+
+      session.close();
+      await _until(() => tv.openControlSockets == 0);
+    });
+
+    test('closing a command session mid-connect leaves no socket open', () async {
+      final session = CommandSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 100)));
+      session.close();
+      await _until(() => tv.controlConnections == 1);
+      await _until(() => tv.openControlSockets == 0);
     });
   });
 

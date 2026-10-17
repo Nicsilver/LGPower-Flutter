@@ -331,9 +331,12 @@ class CommandSession {
   }
 
   void close() {
+    // _die clears _ws, so the socket has to be taken first or it stays open
+    // (and keeps pinging the TV) after every reset.
+    final ws = _ws;
     _die(const CmdReplyErr('Session closed'));
     try {
-      _ws?.close(1000);
+      ws?.close(1000);
     } catch (_) {}
   }
 }
