@@ -504,6 +504,46 @@ void main() {
       expect(client.prefs.clientKey, 'ka');
     });
 
+    testWidgets('backing out at the name step after pairing leaves the active TV untouched', (
+      tester,
+    ) async {
+      final (client, controller) = await _harness(saved);
+      final fake = _FakePairing();
+      await tester.pumpWidget(
+        _app(
+          client,
+          controller,
+          discover: () async => _found(['10.0.0.6']),
+          pairingWatch: fake.watch,
+          addMode: true,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('TV'));
+      await tester.pump();
+      await client.prefs.setClientKey('kb');
+      fake.onPaired!('kb');
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('NAME THIS TV'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+
+      expect(client.prefs.tvIp, '10.0.0.5');
+      expect(client.prefs.clientKey, 'ka');
+      expect(client.prefs.tvMac, 'AA:AA:AA:AA:AA:AA');
+      // What the remote does on resume must not copy the other TV into 'a'.
+      TvStore.syncFromLive(client.prefs);
+      final tvs = TvStore.list(client.prefs);
+      expect(tvs, hasLength(1));
+      expect(tvs.single.ip, '10.0.0.5');
+      expect(tvs.single.clientKey, 'ka');
+      expect(tvs.single.mac, 'AA:AA:AA:AA:AA:AA');
+    });
+
     testWidgets(
       'pairing in add mode ends in the name step and saves a second TV with default shortcuts',
       (tester) async {

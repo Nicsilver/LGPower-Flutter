@@ -73,7 +73,10 @@ class _SetupScreenState extends State<SetupScreen> {
   Timer? _uiTimeout;
   StopPairing? _stopPairing;
   bool _promptShown = false;
-  bool _paired = false;
+  // Set once the new TV is in the saved list. Pairing alone does not count: a
+  // user who backs out at the name step must still get the previous TV's
+  // prefs back, or the next resume would file the new TV's key under it.
+  bool _added = false;
   bool _finishing = false;
   bool _hasIr = false;
 
@@ -102,7 +105,7 @@ class _SetupScreenState extends State<SetupScreen> {
   void dispose() {
     _uiTimeout?.cancel();
     _stopPairing?.call();
-    if (widget.addMode && !_paired) TvStore.cancelAdd(widget.client.prefs);
+    if (widget.addMode && !_added) TvStore.cancelAdd(widget.client.prefs);
     _nameController.dispose();
     super.dispose();
   }
@@ -174,14 +177,16 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _onPaired(String ip) async {
     _uiTimeout?.cancel();
     _stopPairing = null;
-    _paired = true;
     await widget.client.saveTvIp(ip);
     _pairedUdn = _udns[ip];
     // Grab MAC (and the fingerprint, if discovery did not have it) while the
     // name step shows -- neither blocks it (spec §1.5).
     unawaited(
       widget.client.getMacFromDevice().then((mac) {
-        if (mac != null && mac.isNotEmpty) widget.client.saveTvMac(mac);
+        // Not after the user backed out: the live prefs are the old TV's again.
+        if (mac != null && mac.isNotEmpty && widget.client.tvIp == ip) {
+          widget.client.saveTvMac(mac);
+        }
       }),
     );
     if (_pairedUdn == null) {
@@ -204,6 +209,7 @@ class _SetupScreenState extends State<SetupScreen> {
     final client = widget.client;
     final prefs = client.prefs;
     TvStore.addFromLive(prefs, _nameController.text, udn: _pairedUdn ?? '');
+    _added = true;
     if (!widget.addMode) await prefs.setTourPending(true);
     // The new TV's shortcuts come from its own app list, so the remote opens
     // populated
