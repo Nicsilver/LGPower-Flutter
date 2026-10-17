@@ -149,6 +149,8 @@ class WebOsClient {
     CommandSession Function(String ip, Prefs prefs)? commandSessionFactory,
     PointerSession Function(String ip, Prefs prefs)? pointerSessionFactory,
     this.pointerRetryBackoff = const Duration(seconds: 1),
+    this.pairingBlockExpiry = const Duration(seconds: 30),
+    this.watchReadyWait = const Duration(seconds: 5),
   })  : _commandSessionFactory = commandSessionFactory ?? CommandSession.new,
         _pointerSessionFactory = pointerSessionFactory ?? PointerSession.new {
     // Fire-and-forget: primes the synchronous cachedIconFile() lookup.
@@ -164,6 +166,16 @@ class WebOsClient {
   /// this long instead of each touchpad frame starting a new connect against
   /// a TV that is in standby.
   final Duration pointerRetryBackoff;
+
+  /// How long a pairing challenge on the pointer keeps keys answering "accept
+  /// pairing". The prompt on the TV times out by itself, and a pairing that
+  /// finished on a session older than the failure would otherwise never lift
+  /// the block.
+  final Duration pairingBlockExpiry;
+
+  /// How long each round of the power watcher waits for the command session to
+  /// leave CONNECTING before looking again.
+  final Duration watchReadyWait;
 
   CommandSession? _sharedCommandSession;
   PointerSession? _sharedPointerSession;
@@ -205,6 +217,7 @@ class WebOsClient {
   bool _pairingBlocked(PointerSession p) {
     if (!p.pairingStillMissing) return false;
     final since = p.handshakeFailedAt ?? p.createdAt;
+    if (DateTime.now().difference(since) > pairingBlockExpiry) return false;
     return !(_sharedCommandSession?.registeredAt?.isAfter(since) ?? false);
   }
 
@@ -223,7 +236,14 @@ class WebOsClient {
       }
     }
     existing?.close();
-    final session = _pointerSessionFactory(tvIp, prefs);
+    // While the command socket is showing the pairing prompt, a second
+    // registration from here could dismiss or replace it.
+    final command = _sharedCommandSession;
+    final promptShowing =
+        command != null && command.ip == tvIp && command.state == CmdState.needsPairing;
+    final session = promptShowing
+        ? PointerSession.blocked(tvIp, prefs)
+        : _pointerSessionFactory(tvIp, prefs);
     _sharedPointerSession = session;
     return session;
   }
@@ -264,16 +284,48 @@ class WebOsClient {
     };
   }
 
+  /// Ends a held d-pad key: repeats still queued for it are discarded.
+  void endHold(Object hold) => _sharedPointerSession?.dropRepeats(hold);
+
   /// The key is handed to the shared pointer session before any await, so
   /// presses keep their order even while the session is still connecting; the
-  /// result only reports whether that session came up.
-  Future<Result> pressKey(String keyCode) async {
+  /// result reports whether the key was written to a live socket. A [hold]
+  /// marks an auto-repeat of a held key: those are best effort and never wait
+  /// for a retry.
+  Future<Result> pressKey(String keyCode, {Object? hold}) async {
     if (tvIp.isEmpty) return const CmdError('No TV IP configured');
-    final session = pointerSession();
-    session.sendKey(keyCode);
-    if (await session.waitUntilReady()) return const Success();
-    if (_pairingBlocked(session)) return const NeedsPairing();
+    final oneShot = hold == null;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      var session = pointerSession();
+      if (oneShot && attempt == 0) session = await _afterBackoff(session);
+      final accepted = session.sendKey(keyCode, hold: hold);
+      if (accepted && await session.waitUntilReady()) return const Success();
+      if (_pairingBlocked(session)) return const NeedsPairing();
+      // A session that was reset or replaced under the press, or whose socket
+      // refused the frame after it had been up, never saw a handshake fail;
+      // one fresh session is worth a try before reporting a timeout.
+      final worthRetry = oneShot &&
+          session.handshakeFailedAt == null &&
+          (session.retired || !accepted) &&
+          session.ip == tvIp;
+      if (!worthRetry) break;
+    }
     return const CmdError('Timeout. Is the TV on and reachable?');
+  }
+
+  // A key press right after a failed connect would otherwise fail on the spot
+  // although the TV may be fine (a warm-up that hit a closing socket); waiting
+  // out the cooldown turns it into a real attempt.
+  Future<PointerSession> _afterBackoff(PointerSession session) async {
+    final failedAt = session.handshakeFailedAt;
+    if (session.state != PointerState.dead || failedAt == null || _pairingBlocked(session)) {
+      return session;
+    }
+    final remaining = pointerRetryBackoff - DateTime.now().difference(failedAt);
+    if (remaining > Duration.zero) {
+      await Future<void>.delayed(remaining + const Duration(milliseconds: 20));
+    }
+    return pointerSession();
   }
 
   Future<Result> turnOff() => _execute('ssap://system/turnOff');
@@ -598,17 +650,19 @@ class WebOsClient {
           if (cancelCompleter.isCompleted) break;
         }
         final session = _commandSession();
-        await raceCancel(session.awaitReady());
+        await raceCancel(session.awaitReady(timeout: watchReadyWait));
         if (cancelCompleter.isCompleted) break;
 
         switch (session.state) {
           case CmdState.ready:
             final subId = session.subscribe(_powerStateUri, (payload) {
+              // A failed update has no state; read as a state it would count
+              // as "on".
+              final state = payload?['state'] as String? ?? '';
               _publish(
-                PresenceReported(
-                  payload?['state'] as String? ?? '',
-                  _nullIfEmpty(payload?['processing'] as String?),
-                ),
+                state.isEmpty
+                    ? const PresenceUnknown()
+                    : PresenceReported(state, _nullIfEmpty(payload?['processing'] as String?)),
                 listener,
               );
             });
@@ -624,8 +678,22 @@ class WebOsClient {
             while (!cancelCompleter.isCompleted && session.state == CmdState.needsPairing) {
               await raceCancel(Future.delayed(const Duration(milliseconds: 250)));
             }
-            delayMs = session.state == CmdState.ready ? 0 : 5000;
+            // A refused prompt waits longer before asking again, or the TV
+            // would be showing a new one every few seconds.
+            delayMs = session.state == CmdState.ready
+                ? 0
+                : session.pairingRejected
+                    ? 30000
+                    : 5000;
           case CmdState.connecting:
+            // Still within its connect grace: the next round waits on the
+            // same session instead of calling a slow Wi-Fi connect unreachable.
+            if (session.isUsable) {
+              delayMs = 0;
+            } else {
+              _publish(const PresenceUnreachable(), listener);
+              delayMs = 5000;
+            }
           case CmdState.dead:
             _publish(const PresenceUnreachable(), listener);
             delayMs = 5000;

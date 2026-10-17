@@ -11,19 +11,29 @@ const String _pointerSocketUri =
 enum PointerState { connecting, ready, dead }
 
 class _Frame {
-  _Frame.raw(this.kind, this.raw)
+  _Frame.raw(this.kind, this.raw, {this.hold})
       : dx = 0,
         dy = 0,
         queuedAt = DateTime.now();
   _Frame.delta(this.kind, this.dx, this.dy)
       : raw = null,
+        hold = null,
         queuedAt = DateTime.now();
 
   final String kind;
-  final DateTime queuedAt;
   final String? raw;
+
+  /// Set on the auto-repeat presses of a held key; null for everything else.
+  final Object? hold;
+  DateTime queuedAt;
   int dx;
   int dy;
+
+  bool get isMotion => kind == 'move' || kind == 'scroll';
+
+  /// A deliberate single press: never dropped as stale, because its caller is
+  /// waiting for the result.
+  bool get isOneShotKey => kind == 'button' && hold == null;
 
   String encode() => raw ?? 'type:$kind\ndx:$dx\ndy:$dy\n\n';
 }
@@ -57,6 +67,19 @@ class PointerSession {
     _connect();
   }
 
+  /// A session that is dead from the start: the TV is already showing a
+  /// pairing prompt on the command socket, and registering here with the same
+  /// key could dismiss or replace it.
+  PointerSession.blocked(this.ip, this._prefs)
+      : createdAt = DateTime.now(),
+        connectGrace = const Duration(seconds: 10),
+        staleAfter = const Duration(milliseconds: 1500),
+        _connector = connectTrustAll {
+    _keyUsed = _prefs.clientKey;
+    _needsPairing = true;
+    _fail();
+  }
+
   final String ip;
   final Prefs _prefs;
   final SocketConnector _connector;
@@ -68,8 +91,9 @@ class PointerSession {
   /// opens afterwards.
   static const Duration defaultHandshakeTimeout = Duration(seconds: 6);
 
-  /// Queued input older than this is dropped on flush: a key held through a
-  /// slow handshake would otherwise fire as a burst and overshoot.
+  /// Queued cursor movement, clicks and held-key repeats older than this are
+  /// dropped on flush: replayed late they would land at the wrong spot or
+  /// fire as a burst and overshoot. Single key presses are exempt.
   final Duration staleAfter;
 
   static const int _maxQueued = 200;
@@ -94,6 +118,16 @@ class PointerSession {
   // socket and won, marking the session dead a few ms after it actually
   // became ready.
   bool _controlClosingIntentionally = false;
+
+  bool _closedByCaller = false;
+
+  // Set when a queued move or scroll is discarded, so a click queued behind
+  // it is not delivered at a cursor position the user never saw.
+  bool _motionDropped = false;
+
+  /// Closed by [close] while still alive (a reset or a replacement), as
+  /// opposed to failing on its own.
+  bool get retired => _closedByCaller;
 
   bool get isAlive => _state == PointerState.ready && _pointerWs != null;
 
@@ -123,9 +157,10 @@ class PointerSession {
 
   Future<void> _connect() async {
     try {
-      final ws = await _connector('wss://$ip:3001').timeout(const Duration(seconds: 3));
+      final ws = await connectWithTimeout(
+          _connector, 'wss://$ip:3001', const Duration(seconds: 3));
       if (_state == PointerState.dead) {
-        unawaited(ws.close(1000).catchError((_) {}));
+        closeQuietly(ws);
         return;
       }
       _controlWs = ws;
@@ -142,15 +177,19 @@ class PointerSession {
   }
 
   Future<void> _onControlMessage(dynamic raw) async {
-    Map<String, dynamic> msg;
+    // A reply that outlives the session must not open a pointer socket for it.
+    if (_state == PointerState.dead) return;
+    String? type;
+    String? id;
+    Map<String, dynamic>? payload;
     try {
-      msg = decodeSsapMessage(raw as String);
+      final msg = decodeSsapMessage(raw as String);
+      type = msg['type'] as String?;
+      id = msg['id'] as String?;
+      payload = msg['payload'] as Map<String, dynamic>?;
     } catch (_) {
       return;
     }
-    final type = msg['type'] as String?;
-    final id = msg['id'] as String?;
-    final payload = msg['payload'] as Map<String, dynamic>?;
 
     if (type == 'registered') {
       final key = payload?['client-key'] as String?;
@@ -184,25 +223,23 @@ class PointerSession {
       return;
     }
 
-    if (type == 'error') {
-      if (id == regMessageId) _needsPairing = true;
-      _fail();
-    }
+    // An error for the registration (a denied or timed-out prompt, or a TV
+    // hiccup) is an ordinary failure with the usual cooldown: only the prompt
+    // challenge above means the user has something to accept.
+    if (type == 'error') _fail();
   }
 
   void _closeControl() {
     _controlClosingIntentionally = true;
-    try {
-      _controlWs?.close(1000);
-    } catch (_) {}
+    closeQuietly(_controlWs);
     _controlWs = null;
   }
 
   Future<void> _openPointerSocket(String url) async {
     try {
-      final ws = await _connector(url).timeout(const Duration(seconds: 3));
+      final ws = await connectWithTimeout(_connector, url, const Duration(seconds: 3));
       if (_state == PointerState.dead) {
-        unawaited(ws.close(1000).catchError((_) {}));
+        closeQuietly(ws);
         return;
       }
       _pointerWs = ws;
@@ -237,6 +274,7 @@ class PointerSession {
 
   void _fail({bool byCaller = false}) {
     if (_state == PointerState.dead) return;
+    if (byCaller) _closedByCaller = true;
     if (_state == PointerState.connecting && !byCaller) {
       handshakeFailedAt = DateTime.now();
     }
@@ -247,9 +285,7 @@ class PointerSession {
     _closeControl();
     final ws = _pointerWs;
     _pointerWs = null;
-    try {
-      ws?.close(1000);
-    } catch (_) {}
+    closeQuietly(ws);
   }
 
   /// Completes once the handshake has finished; true only if the session came
@@ -263,9 +299,17 @@ class PointerSession {
     return _state == PointerState.ready;
   }
 
+  /// False means no live socket took the key (dead session, or the write
+  /// failed), so the caller must not report it as delivered. A [hold] marks
+  /// an auto-repeat press of a held key.
   // No `down:` field, no drag, no left/right button field -- this app never
   // sends them (spec §1.5).
-  void sendKey(String keyCode) => _submit(_Frame.raw('button', 'type:button\nname:$keyCode\n\n'));
+  bool sendKey(String keyCode, {Object? hold}) =>
+      _submit(_Frame.raw('button', 'type:button\nname:$keyCode\n\n', hold: hold));
+
+  /// Discards the queued repeats of a hold: once the finger is up they must
+  /// not fire as a burst when the socket opens.
+  void dropRepeats(Object hold) => _queue.removeWhere((f) => f.hold == hold);
 
   void move(double dx, double dy) => _submitDelta('move', dx.toInt(), dy.toInt());
 
@@ -276,44 +320,77 @@ class PointerSession {
   void _submitDelta(String kind, int dx, int dy) {
     if (_state == PointerState.connecting && _queue.isNotEmpty && _queue.last.kind == kind) {
       // Folding consecutive queued moves keeps the cursor travel but turns a
-      // burst of tiny frames into one when the socket opens.
+      // burst of tiny frames into one when the socket opens. The frame is as
+      // fresh as its newest part: keeping the first fragment's age would drop
+      // the new movement together with a stale start.
       _queue.last
         ..dx += dx
-        ..dy += dy;
+        ..dy += dy
+        ..queuedAt = DateTime.now();
       return;
     }
     _submit(_Frame.delta(kind, dx, dy));
   }
 
-  void _submit(_Frame frame) {
+  bool _submit(_Frame frame) {
     switch (_state) {
       case PointerState.ready:
-        _write(frame);
+        return _write(frame);
       case PointerState.connecting:
-        if (_queue.length >= _maxQueued) _queue.removeAt(0);
+        if (_queue.length >= _maxQueued) _evictOldest();
         _queue.add(frame);
+        return true;
       case PointerState.dead:
-        break;
+        return false;
     }
+  }
+
+  // Key presses outlive the cap so a flood of moves cannot push one out.
+  void _evictOldest() {
+    var i = _queue.indexWhere((f) => !f.isOneShotKey);
+    if (i < 0) i = 0;
+    final dropped = _queue.removeAt(i);
+    if (dropped.isMotion) _motionDropped = true;
   }
 
   void _flushQueue() {
     final frames = List.of(_queue);
     _queue.clear();
     final cutoff = DateTime.now().subtract(staleAfter);
+    // Only the newest repeat of each hold is still of any use.
+    final latestRepeat = <Object, _Frame>{
+      for (final f in frames)
+        if (f.hold != null) f.hold!: f,
+    };
+    var motionDropped = _motionDropped;
+    _motionDropped = false;
     for (final f in frames) {
-      if (f.kind != 'click' && f.queuedAt.isBefore(cutoff)) continue;
-      _write(f);
+      if (f.isOneShotKey) {
+        _write(f);
+        continue;
+      }
+      final stale = f.queuedAt.isBefore(cutoff);
+      if (f.hold != null) {
+        if (!stale && identical(latestRepeat[f.hold], f)) _write(f);
+      } else if (f.kind == 'click') {
+        if (!stale && !motionDropped) _write(f);
+      } else if (stale) {
+        motionDropped = true;
+      } else {
+        _write(f);
+      }
     }
   }
 
-  void _write(_Frame frame) {
+  bool _write(_Frame frame) {
     final ws = _pointerWs;
-    if (ws == null) return;
+    if (ws == null) return false;
     try {
       ws.add(frame.encode());
+      return true;
     } catch (_) {
       _fail();
+      return false;
     }
   }
 

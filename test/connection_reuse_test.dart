@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:lgpower/core/prefs.dart';
 import 'package:lgpower/net/command_session.dart';
+import 'package:lgpower/net/pairing_watcher.dart';
 import 'package:lgpower/net/pointer_session.dart';
 import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/net/ws_connect.dart';
@@ -24,8 +25,24 @@ class _FakeTv {
   /// Answers registration with the pairing prompt challenge instead of
   /// accepting it, like a TV that does not know the client key.
   bool challengePairing = false;
+
+  /// Answers registration with an error, like a TV whose prompt was denied.
+  bool rejectRegistration = false;
+
+  /// With [challengePairing]: follows the challenge with the denial error.
+  bool denyAfterChallenge = false;
+
+  /// Replaces the registration reply wholesale (malformed-message tests).
+  String Function(Object? id)? registerReply;
+
+  /// What a getPowerState subscription is answered with.
+  Map<String, dynamic> subscribeReply = {
+    'type': 'response',
+    'payload': {'returnValue': true, 'state': 'Active'},
+  };
   final pointerFrames = <String>[];
   final _pointerSockets = <WebSocket>[];
+  final _controlSockets = <WebSocket>[];
 
   int get port => _server.port;
 
@@ -41,12 +58,35 @@ class _FakeTv {
       }
       controlConnections++;
       openControlSockets++;
+      _controlSockets.add(ws);
       ws.listen((raw) {
         final msg = jsonDecode(raw as String) as Map<String, dynamic>;
         final id = msg['id'];
         switch (msg['type']) {
           case 'register':
             registerCount++;
+            final custom = registerReply;
+            if (custom != null) {
+              ws.add(custom(id));
+              return;
+            }
+            if (rejectRegistration) {
+              ws.add(jsonEncode({
+                'type': 'error',
+                'id': id,
+                'payload': {'errorText': '403 User denied access'},
+              }));
+              return;
+            }
+            if (challengePairing && denyAfterChallenge) {
+              Timer(const Duration(milliseconds: 40), () {
+                ws.add(jsonEncode({
+                  'type': 'error',
+                  'id': id,
+                  'payload': {'errorText': '403 User denied access'},
+                }));
+              });
+            }
             ws.add(jsonEncode(challengePairing
                 ? {
                     'type': 'response',
@@ -58,6 +98,8 @@ class _FakeTv {
                     'id': id,
                     'payload': {'client-key': 'key'},
                   }));
+          case 'subscribe':
+            ws.add(jsonEncode({...subscribeReply, 'id': id}));
           case 'request':
             final uri = msg['uri'];
             final payload =
@@ -76,6 +118,17 @@ class _FakeTv {
         }
       }, onDone: () => openControlSockets--);
     });
+  }
+
+  /// Tells every open control socket the pairing prompt was accepted.
+  void pushRegistered() {
+    for (final s in _controlSockets) {
+      s.add(jsonEncode({
+        'type': 'registered',
+        'id': 'reg_0',
+        'payload': {'client-key': 'late-key'},
+      }));
+    }
   }
 
   void dropPointerSockets() {
@@ -266,21 +319,44 @@ void main() {
   });
 
   group('reset and close', () {
-    test('a reset mid-connect drops queued keys instead of flushing them late', () async {
+    test('a reset mid-connect hands waiting presses to a fresh session, once each', () async {
       final prefs = await _prefs();
+      var created = 0;
       final client = WebOsClient(prefs, pointerSessionFactory: (ip, p) {
+        created++;
         return PointerSession(ip, p,
             connector: tv.connector(delay: const Duration(milliseconds: 150)));
       });
       addTearDown(client.resetConnection);
 
-      final presses = [client.pressKey('VOLUMEUP'), client.pressKey('VOLUMEUP')];
+      final presses = [client.pressKey('VOLUMEUP'), client.pressKey('VOLUMEDOWN')];
       client.resetConnection();
 
-      expect(await Future.wait(presses), everyElement(isA<CmdError>()));
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      expect(tv.pointerConnections, 0);
-      expect(_buttons(tv), isEmpty);
+      expect(await Future.wait(presses), everyElement(isA<Success>()));
+      await _until(() => _buttons(tv).length >= 2);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(created, 2);
+      expect(tv.pointerConnections, 1);
+      expect(_buttons(tv), ['type:button\nname:VOLUMEUP\n\n', 'type:button\nname:VOLUMEDOWN\n\n']);
+    });
+
+    test('a press whose replacement session is reset too gives up instead of looping', () async {
+      final prefs = await _prefs();
+      var created = 0;
+      final client = WebOsClient(prefs, pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p,
+            connector: tv.connector(delay: const Duration(milliseconds: 150)));
+      });
+      addTearDown(client.resetConnection);
+
+      final press = client.pressKey('UP');
+      client.resetConnection();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      client.resetConnection();
+
+      expect(await press, isA<CmdError>());
+      expect(created, 2);
     });
 
     test('closing a ready command session closes its socket on the TV', () async {
@@ -341,22 +417,182 @@ void main() {
   });
 
   group('pointer session timing', () {
-    test('input queued longer than staleAfter is not flushed, fresh input and clicks are', () async {
+    test('queued moves and clicks older than staleAfter are dropped, key presses never are', () async {
       final session = PointerSession('127.0.0.1', await _prefs(),
           connector: tv.connector(delay: const Duration(milliseconds: 250)),
-          staleAfter: const Duration(milliseconds: 300));
+          staleAfter: const Duration(milliseconds: 100));
       addTearDown(session.close);
 
       session.sendKey('UP');
       session.move(5, 5);
       session.click();
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
       session.sendKey('DOWN');
 
       expect(await session.waitUntilReady(), isTrue);
       await _until(() => tv.pointerFrames.length >= 2);
       await Future<void>.delayed(const Duration(milliseconds: 100));
-      expect(tv.pointerFrames, ['type:click\n\n', 'type:button\nname:DOWN\n\n']);
+      expect(tv.pointerFrames, ['type:button\nname:UP\n\n', 'type:button\nname:DOWN\n\n']);
+    });
+
+    test('a fresh click behind a dropped move is dropped too, it would land at the wrong spot', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 250)),
+          staleAfter: const Duration(milliseconds: 100));
+      addTearDown(session.close);
+
+      session.move(5, 5);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      session.click();
+
+      expect(await session.waitUntilReady(), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(tv.pointerFrames, isEmpty);
+    });
+
+    test('a click with no stale move before it is kept', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 100)),
+          staleAfter: const Duration(milliseconds: 500));
+      addTearDown(session.close);
+
+      session.move(2, 2);
+      session.click();
+      expect(await session.waitUntilReady(), isTrue);
+      await _until(() => tv.pointerFrames.length >= 2);
+      expect(tv.pointerFrames, ['type:move\ndx:2\ndy:2\n\n', 'type:click\n\n']);
+    });
+
+    test('a click behind a move the queue cap evicted is dropped', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 200)));
+      addTearDown(session.close);
+
+      // Alternating kinds so nothing folds; 200 fills the queue.
+      for (var i = 0; i < 100; i++) {
+        session.move(1, 0);
+        session.scroll(0, 1);
+      }
+      session.click();
+
+      expect(await session.waitUntilReady(), isTrue);
+      await _until(() => tv.pointerFrames.length >= 199);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(tv.pointerFrames.where((f) => f.startsWith('type:click')), isEmpty);
+    });
+
+    test('the queue cap never evicts a key press while other input is queued', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 200)));
+      addTearDown(session.close);
+
+      session.sendKey('UP');
+      for (var i = 0; i < 250; i++) {
+        session.click();
+      }
+
+      expect(await session.waitUntilReady(), isTrue);
+      await _until(() => tv.pointerFrames.length >= 200);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(tv.pointerFrames.first, 'type:button\nname:UP\n\n');
+      expect(tv.pointerFrames.length, 200);
+    });
+
+    test('a folded move is as fresh as its newest part', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 200)),
+          staleAfter: const Duration(milliseconds: 300));
+      addTearDown(session.close);
+
+      session.move(1, 0);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      session.move(1, 0);
+
+      expect(await session.waitUntilReady(), isTrue);
+      await _until(() => tv.pointerFrames.isNotEmpty);
+      expect(tv.pointerFrames, ['type:move\ndx:2\ndy:0\n\n']);
+    });
+
+    test('only the newest queued repeat of a hold is sent, and none after the hold ended', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 200)));
+      addTearDown(session.close);
+
+      final held = Object();
+      final released = Object();
+      session.sendKey('UP');
+      for (var i = 0; i < 6; i++) {
+        session.sendKey('UP', hold: held);
+        session.sendKey('DOWN', hold: released);
+      }
+      session.dropRepeats(released);
+
+      expect(await session.waitUntilReady(), isTrue);
+      await _until(() => tv.pointerFrames.length >= 2);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(tv.pointerFrames, ['type:button\nname:UP\n\n', 'type:button\nname:UP\n\n']);
+    });
+
+    test('a stale queued repeat is dropped', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 250)),
+          staleAfter: const Duration(milliseconds: 100));
+      addTearDown(session.close);
+
+      session.sendKey('UP', hold: Object());
+      expect(await session.waitUntilReady(), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(tv.pointerFrames, isEmpty);
+    });
+
+    test('sendKey reports whether a session can still take the key', () async {
+      final live = PointerSession('127.0.0.1', await _prefs(), connector: tv.connector());
+      addTearDown(live.close);
+      expect(live.sendKey('UP'), isTrue);
+      expect(await live.waitUntilReady(), isTrue);
+      expect(live.sendKey('UP'), isTrue);
+
+      final dead = PointerSession('127.0.0.1', await _prefs(),
+          connector: (_) => Future<WebSocket>.error(const SocketException('refused')));
+      expect(await dead.waitUntilReady(), isFalse);
+      expect(dead.sendKey('UP'), isFalse);
+      expect(dead.retired, isFalse);
+
+      live.close();
+      expect(live.sendKey('UP'), isFalse);
+      expect(live.retired, isTrue);
+    });
+
+    test('a key press queued through a handshake slower than staleAfter is still delivered', () async {
+      final prefs = await _prefs();
+      final client = WebOsClient(prefs, pointerSessionFactory: (ip, p) {
+        return PointerSession(ip, p,
+            connector: tv.connector(delay: const Duration(milliseconds: 250)),
+            staleAfter: const Duration(milliseconds: 100));
+      });
+      addTearDown(client.resetConnection);
+
+      expect(await client.pressKey('ENTER'), isA<Success>());
+      await _until(() => _buttons(tv).length == 1);
+      expect(_buttons(tv), ['type:button\nname:ENTER\n\n']);
+    });
+
+    test('the repeats of a released hold are discarded by the client', () async {
+      final prefs = await _prefs();
+      final client = WebOsClient(prefs, pointerSessionFactory: (ip, p) {
+        return PointerSession(ip, p, connector: tv.connector(delay: const Duration(milliseconds: 200)));
+      });
+      addTearDown(client.resetConnection);
+
+      final hold = Object();
+      final first = client.pressKey('LEFT');
+      final repeats = [for (var i = 0; i < 5; i++) client.pressKey('LEFT', hold: hold)];
+      client.endHold(hold);
+
+      expect(await first, isA<Success>());
+      await Future.wait(repeats);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(_buttons(tv), ['type:button\nname:LEFT\n\n']);
     });
 
     test('a session that opens after its handshake timeout never sends the queued key', () async {
@@ -396,11 +632,51 @@ void main() {
         s.move(1, 1);
       }
       expect(created, 1);
-      expect(await client.pressKey('UP'), isA<CmdError>());
-      expect(created, 1);
 
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(client.pointerSession(), isNot(same(first)));
+      expect(created, 2);
+    });
+
+    test('a key pressed inside the cooldown waits it out and connects once', () async {
+      final prefs = await _prefs();
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: const Duration(milliseconds: 250),
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p,
+            connector: created == 1
+                ? (_) => Future<WebSocket>.error(const SocketException('refused'))
+                : tv.connector());
+      });
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      await _until(() => first.state == PointerState.dead);
+
+      final watch = Stopwatch()..start();
+      expect(await client.pressKey('UP'), isA<Success>());
+      expect(watch.elapsedMilliseconds, greaterThanOrEqualTo(150));
+      expect(created, 2);
+      await _until(() => _buttons(tv).length == 1);
+    });
+
+    test('a key pressed inside the cooldown of a TV that stays down times out after one retry', () async {
+      final prefs = await _prefs();
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: const Duration(milliseconds: 100),
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p,
+            connector: (_) => Future<WebSocket>.error(const SocketException('refused')));
+      });
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      await _until(() => first.state == PointerState.dead);
+      expect(await client.pressKey('UP'), isA<CmdError>());
       expect(created, 2);
     });
 
@@ -653,6 +929,259 @@ void main() {
 
       expect(pointer.isAlive, isTrue);
       expect(client.pointerSession(), same(pointer));
+    });
+  });
+
+  group('pairing errors and expiry', () {
+    test('an error for the registration is an ordinary failure, not a pairing block', () async {
+      tv.rejectRegistration = true;
+      final prefs = await _prefs();
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: Duration.zero,
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p, connector: tv.connector());
+      });
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      await _until(() => first.state == PointerState.dead);
+      expect(first.pairingStillMissing, isFalse);
+      expect(client.pointerSession(), isNot(same(first)));
+      expect(created, 2);
+
+      expect(await client.pressKey('UP'), isA<CmdError>());
+      expect(tv.registerCount, greaterThanOrEqualTo(2));
+    });
+
+    test('a pairing block lifts by itself after pairingBlockExpiry', () async {
+      tv.challengePairing = true;
+      final prefs = await _prefs(clientKey: 'stale');
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: Duration.zero,
+          pairingBlockExpiry: const Duration(milliseconds: 150),
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p, connector: tv.connector());
+      });
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      await _until(() => first.state == PointerState.dead);
+      expect(client.pointerSession(), same(first));
+
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(client.pointerSession(), isNot(same(first)));
+      expect(created, 2);
+    });
+
+    test('while the command socket shows the prompt the pointer never registers', () async {
+      tv.challengePairing = true;
+      final prefs = await _prefs(clientKey: 'stale');
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: Duration.zero,
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p, connector: tv.connector());
+      },
+          commandSessionFactory: (ip, p) => CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      expect(await client.getVolume(), isNull);
+      expect(tv.registerCount, 1);
+
+      final blocked = client.pointerSession();
+      expect(blocked.state, PointerState.dead);
+      expect(blocked.pairingStillMissing, isTrue);
+      expect(await client.pressKey('UP'), isA<NeedsPairing>());
+      expect(client.pointerSession(), same(blocked));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(created, 0);
+      expect(tv.registerCount, 1);
+
+      // The user accepts: the command session registers and stores the key.
+      tv.challengePairing = false;
+      tv.pushRegistered();
+      await _until(() => prefs.clientKey == 'late-key');
+      final next = client.pointerSession();
+      expect(next, isNot(same(blocked)));
+      expect(created, 1);
+      expect(await next.waitUntilReady(), isTrue);
+    });
+  });
+
+  group('command session pairing denial', () {
+    test('a denied prompt ends the session instead of leaving it waiting for the prompt', () async {
+      tv.challengePairing = true;
+      tv.denyAfterChallenge = true;
+      final session = CommandSession('127.0.0.1', await _prefs(clientKey: 'stale'),
+          connector: tv.connector());
+      addTearDown(session.close);
+
+      await _until(() => session.state == CmdState.dead);
+      expect(session.pairingRejected, isTrue);
+      expect(session.deadReason, contains('denied'));
+      expect(session.isUsable, isFalse);
+      expect(await session.send('ssap://audio/getVolume'), isA<CmdReplyErr>());
+      await _until(() => tv.openControlSockets == 0);
+    });
+
+    test('the power watcher shows pairing and does not ask again straight away', () async {
+      tv.challengePairing = true;
+      tv.denyAfterChallenge = true;
+      final prefs = await _prefs(clientKey: 'stale');
+      final client = WebOsClient(prefs,
+          commandSessionFactory: (ip, p) => CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      final events = <Presence>[];
+      final stop = client.watchPower(events.add);
+      addTearDown(stop);
+
+      await _until(() => events.any((e) => e is PresenceNeedsPairing));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(tv.registerCount, 1);
+      expect(events.whereType<PresenceUnreachable>(), isEmpty);
+    });
+  });
+
+  group('power watching', () {
+    test('a slow command connect within its grace is not reported unreachable', () async {
+      final prefs = await _prefs();
+      final client = WebOsClient(prefs,
+          watchReadyWait: const Duration(milliseconds: 80),
+          commandSessionFactory: (ip, p) => CommandSession(ip, p,
+              connector: tv.connector(delay: const Duration(milliseconds: 400))));
+      addTearDown(client.resetConnection);
+
+      final events = <Presence>[];
+      final stop = client.watchPower(events.add);
+      addTearDown(stop);
+
+      await _until(() => events.any((e) => e is PresenceReported));
+      expect(events.whereType<PresenceUnreachable>(), isEmpty);
+    });
+
+    test('a connect that outlives its grace is reported unreachable', () async {
+      final prefs = await _prefs();
+      final client = WebOsClient(prefs,
+          watchReadyWait: const Duration(milliseconds: 80),
+          commandSessionFactory: (ip, p) => CommandSession(ip, p,
+              connector: (_) => Completer<WebSocket>().future,
+              connectGrace: const Duration(milliseconds: 200)));
+      addTearDown(client.resetConnection);
+
+      final events = <Presence>[];
+      final stop = client.watchPower(events.add);
+      addTearDown(stop);
+
+      await _until(() => events.any((e) => e is PresenceUnreachable));
+    });
+
+    test('a power update with a state is reported as that state', () async {
+      final client = WebOsClient(await _prefs(),
+          commandSessionFactory: (ip, p) => CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      final events = <Presence>[];
+      final stop = client.watchPower(events.add);
+      addTearDown(stop);
+
+      await _until(() => events.isNotEmpty);
+      expect(events.first, isA<PresenceReported>());
+      expect((events.first as PresenceReported).isOn, isTrue);
+    });
+
+    test('a failed or empty power update is unknown, never "on"', () async {
+      for (final reply in [
+        {'type': 'error', 'payload': {'errorText': 'nope'}},
+        {'type': 'response', 'payload': {'returnValue': false}},
+        {'type': 'response', 'payload': {'returnValue': true, 'state': ''}},
+      ]) {
+        tv.subscribeReply = reply;
+        final client = WebOsClient(await _prefs(),
+            commandSessionFactory: (ip, p) => CommandSession(ip, p, connector: tv.connector()));
+
+        final events = <Presence>[];
+        final stop = client.watchPower(events.add);
+        await _until(() => events.isNotEmpty);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        stop();
+        client.resetConnection();
+
+        expect(events, everyElement(isA<PresenceUnknown>()), reason: '$reply');
+      }
+    });
+  });
+
+  group('socket helpers', () {
+    test('a connect that finishes after its timeout is closed instead of left open', () async {
+      final attempt = connectWithTimeout(
+        tv.connector(delay: const Duration(milliseconds: 200)),
+        'wss://127.0.0.1:3001',
+        const Duration(milliseconds: 50),
+      );
+      await expectLater(attempt, throwsA(isA<TimeoutException>()));
+
+      await _until(() => tv.controlConnections == 1);
+      await _until(() => tv.openControlSockets == 0);
+    });
+
+    test('a malformed reply during the pointer handshake is ignored without an unhandled error', () async {
+      tv.registerReply = (id) => jsonEncode({'type': 'response', 'id': id, 'payload': 'oops'});
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(), handshakeTimeout: const Duration(milliseconds: 250));
+      addTearDown(session.close);
+
+      expect(await session.waitUntilReady(), isFalse);
+      expect(session.state, PointerState.dead);
+    });
+  });
+
+  group('PairingWatcher', () {
+    test('stopping ends the attempt in flight and nothing is saved afterwards', () async {
+      tv.challengePairing = true;
+      final prefs = await _prefs(clientKey: 'old');
+      var prompts = 0;
+      var paired = 0;
+      final stop = PairingWatcher(prefs, connector: tv.connector()).watch(
+        '127.0.0.1',
+        onPromptShown: () => prompts++,
+        onPaired: (_) => paired++,
+      );
+
+      await _until(() => prompts == 1);
+      expect(tv.openControlSockets, 1);
+      stop();
+      await _until(() => tv.openControlSockets == 0);
+
+      tv.pushRegistered();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(paired, 0);
+      expect(prefs.clientKey, 'old');
+      expect(tv.controlConnections, 1);
+    });
+
+    test('a pairing that completes while watching still saves the key', () async {
+      tv.challengePairing = true;
+      final prefs = await _prefs(clientKey: 'old');
+      var prompts = 0;
+      String? pairedKey;
+      final stop = PairingWatcher(prefs, connector: tv.connector()).watch(
+        '127.0.0.1',
+        onPromptShown: () => prompts++,
+        onPaired: (k) => pairedKey = k,
+      );
+      addTearDown(stop);
+
+      await _until(() => prompts == 1);
+      tv.pushRegistered();
+      await _until(() => pairedKey != null);
+      expect(pairedKey, 'late-key');
+      expect(prefs.clientKey, 'late-key');
     });
   });
 }

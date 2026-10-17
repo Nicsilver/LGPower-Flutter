@@ -84,6 +84,10 @@ class CommandSession {
   WebSocket? _ws;
   String? deadReason;
 
+  /// The TV answered the registration with an error (prompt denied or timed
+  /// out), as opposed to the socket just dropping.
+  bool pairingRejected = false;
+
   final _idSeq = SsapIdSequence();
   final _pending = <String, Completer<CmdReply>>{};
   final _subscriptions = <String, void Function(Map<String, dynamic>?)>{};
@@ -107,10 +111,10 @@ class CommandSession {
 
   Future<void> _connect() async {
     try {
-      final ws = await _connector('wss://$ip:3001').timeout(const Duration(seconds: 3));
+      final ws = await connectWithTimeout(_connector, 'wss://$ip:3001', const Duration(seconds: 3));
       if (_state == CmdState.dead) {
         // close() ran while the connect was in flight; nothing owns this socket.
-        unawaited(ws.close(1000).catchError((_) {}));
+        closeQuietly(ws);
         return;
       }
       ws.pingInterval = const Duration(seconds: 15);
@@ -124,6 +128,7 @@ class CommandSession {
   }
 
   void _onDone() {
+    if (_state == CmdState.dead) return;
     // A TV in standby accepts the upgrade and then closes with "Try Again
     // Later (EWS)" -- record the reason so the next send() surfaces it
     // instead of a bare "Connection closed".
@@ -133,6 +138,7 @@ class CommandSession {
   }
 
   void _onError(Object error) {
+    if (_state == CmdState.dead) return;
     deadReason = error.toString();
     _die(CmdReplyErr(deadReason ?? 'Connection failed'));
   }
@@ -206,6 +212,18 @@ class CommandSession {
       } else {
         completer.complete(CmdReplyOk(payload ?? const {}));
       }
+      return;
+    }
+
+    // Denied or timed-out pairing prompt. Left alone the session would sit in
+    // needsPairing for good, with nothing on the TV left to accept.
+    if (type == 'error' && id == regMessageId) {
+      final errorText = (payload?['errorText'] as String?) ?? '';
+      deadReason = errorText.isEmpty ? 'Pairing was not accepted' : errorText;
+      pairingRejected = true;
+      final ws = _ws;
+      _die(CmdReplyErr(deadReason!));
+      closeQuietly(ws);
       return;
     }
 
@@ -343,8 +361,6 @@ class CommandSession {
     // (and keeps pinging the TV) after every reset.
     final ws = _ws;
     _die(const CmdReplyErr('Session closed'));
-    try {
-      ws?.close(1000);
-    } catch (_) {}
+    closeQuietly(ws);
   }
 }

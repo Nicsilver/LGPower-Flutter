@@ -32,6 +32,7 @@ class _DpadState extends State<Dpad> {
   _Sector? _sector;
   Timer? _initialDelay;
   Timer? _repeat;
+  Object? _hold;
 
   void _cancelTimers() {
     _initialDelay?.cancel();
@@ -43,23 +44,32 @@ class _DpadState extends State<Dpad> {
   void _start(_Sector sector, String keyCode) {
     setState(() => _sector = sector);
     unawaited(widget.controller.pressSimple(keyCode));
-    _cancelTimers();
+    _endHold();
+    final hold = _hold = Object();
     _initialDelay = Timer(const Duration(milliseconds: 400), () {
       _repeat = Timer.periodic(const Duration(milliseconds: 120), (_) {
         Haptics.selection();
-        unawaited(widget.controller.client.pressKey(keyCode));
+        unawaited(widget.controller.client.pressKey(keyCode, hold: hold));
       });
     });
   }
 
   void _end() {
     setState(() => _sector = null);
+    _endHold();
+  }
+
+  // Repeats still queued behind a slow connect must not fire after release.
+  void _endHold() {
     _cancelTimers();
+    final hold = _hold;
+    _hold = null;
+    if (hold != null) widget.controller.client.endHold(hold);
   }
 
   @override
   void dispose() {
-    _cancelTimers();
+    _endHold();
     super.dispose();
   }
 

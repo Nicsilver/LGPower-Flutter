@@ -55,7 +55,7 @@ class FakeWebOsClient extends WebOsClient {
   void warmPointer() {}
 
   @override
-  Future<Result> pressKey(String keyCode) async {
+  Future<Result> pressKey(String keyCode, {Object? hold}) async {
     pressedKeys.add(keyCode);
     return const Success();
   }
