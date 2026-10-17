@@ -563,6 +563,22 @@ void main() {
       expect(tv.pointerFrames, ['type:move\ndx:2\ndy:0\n\n']);
     });
 
+    test('zero-delta moves are not sent, in any state', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: tv.connector(delay: const Duration(milliseconds: 100)));
+      addTearDown(session.close);
+
+      session.move(0, 0);
+      session.move(0.4, -0.9);
+      expect(await session.waitUntilReady(), isTrue);
+      session.move(0, 0);
+      session.move(2, 0);
+      session.click();
+
+      await _until(() => tv.pointerFrames.length >= 2);
+      expect(tv.pointerFrames, ['type:move\ndx:2\ndy:0\n\n', 'type:click\n\n']);
+    });
+
     test('only the newest queued repeat of a hold is sent, and none after the hold ended', () async {
       final session = PointerSession('127.0.0.1', await _prefs(),
           connector: tv.connector(delay: const Duration(milliseconds: 200)));

@@ -317,7 +317,12 @@ class PointerSession {
   /// not fire as a burst when the socket opens.
   void dropRepeats(Object hold) => _queue.removeWhere((f) => f.hold == hold);
 
-  void move(double dx, double dy) => _submitDelta('move', dx.toInt(), dy.toInt());
+  void move(double dx, double dy) {
+    final x = dx.toInt(), y = dy.toInt();
+    // Sub-pixel drags truncate to 0,0; the TV gets nothing from those frames.
+    if (x == 0 && y == 0) return;
+    _submitDelta('move', x, y);
+  }
 
   void scroll(double dx, double dy) => _submitDelta('scroll', dx.toInt(), dy.toInt());
 
