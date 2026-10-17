@@ -165,6 +165,11 @@ class RemoteController extends ChangeNotifier {
   // ---------------------------------------------------------------------
 
   void startWatching() {
+    // Without this a second call (resume, returning from a pushed screen, the
+    // auto-discovery finishing) leaves the previous watch loop running and
+    // reconnecting beside the new one.
+    _stopWatching?.call();
+    _stopWatching = null;
     if (client.tvIp.isEmpty) {
       status = TvStatus.searching;
       _notify();

@@ -88,6 +88,7 @@ class _MainScreenState extends State<MainScreen>
   _SlideRow _slideRow = _SlideRow.none;
   bool _slideRowJustDismissed = false;
   bool _hardwareKeysHooked = false;
+  bool _wasPaused = false;
   bool _tourRunning = false;
   // Resolved once at bootstrap; without a blaster nothing in the UI mentions IR
   bool _hasIrEmitter = false;
@@ -159,9 +160,14 @@ class _MainScreenState extends State<MainScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_ready) return;
     if (state == AppLifecycleState.resumed) {
+      // inactive -> resumed (iOS Control Center, a system dialog) never went
+      // through onPause; resetting then would tear down a healthy connection.
+      if (!_wasPaused) return;
+      _wasPaused = false;
       unawaited(_controller.onResume());
       unawaited(_syncWakelock());
     } else if (state == AppLifecycleState.paused) {
+      _wasPaused = true;
       _controller.onPause();
       // Unconditional -- a backgrounded remote has no screen to keep on, and
       // the wakelock would otherwise outlive the app going to the background.

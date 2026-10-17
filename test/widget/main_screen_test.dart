@@ -12,6 +12,7 @@ import 'package:lgpower/core/prefs.dart';
 import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/theme/theme_manager.dart';
 import 'package:lgpower/ui/main/main_screen.dart';
+import 'package:lgpower/ui/main/remote_controller.dart';
 import 'package:lgpower/ui/main/widgets/level_pill.dart';
 import 'package:lgpower/ui/main/widgets/numpad_page.dart';
 
@@ -42,11 +43,23 @@ class FakeWebOsClient extends WebOsClient {
     _listener?.call(p);
   }
 
+  int watchStarts = 0;
+  int watchStops = 0;
+  int resets = 0;
+  int get activeWatchers => watchStarts - watchStops;
+
   @override
   void Function() watchPower(void Function(Presence) listener) {
     _listener = listener;
-    return () => _listener = null;
+    watchStarts++;
+    return () {
+      watchStops++;
+      _listener = null;
+    };
   }
+
+  @override
+  void resetConnection() => resets++;
 
   @override
   Future<Presence> awaitPresence(int timeoutMs) async => _presence;
@@ -276,6 +289,62 @@ void main() {
     expect(find.text('Red'), findsNothing);
     expect(find.text('Colors'), findsOneWidget);
     handle.dispose();
+  });
+
+  group('lifecycle', () {
+    testWidgets('inactive then resumed keeps the connection and the one watcher', (
+      tester,
+    ) async {
+      final prefs = await _freshPrefs();
+      final client = FakeWebOsClient(prefs);
+      await _pumpMainScreen(tester, prefs: prefs, client: client);
+      final resets = client.resets;
+      expect(client.activeWatchers, 1);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expect(client.resets, resets);
+      expect(client.activeWatchers, 1);
+    });
+
+    testWidgets('paused then resumed rebuilds the connection with one watcher', (
+      tester,
+    ) async {
+      final prefs = await _freshPrefs();
+      final client = FakeWebOsClient(prefs);
+      await _pumpMainScreen(tester, prefs: prefs, client: client);
+      final resets = client.resets;
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      expect(client.activeWatchers, 0);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expect(client.resets, resets + 1);
+      expect(client.activeWatchers, 1);
+    });
+
+    test('starting the watch again stops the previous watcher first', () async {
+      final prefs = await _freshPrefs();
+      final client = FakeWebOsClient(prefs);
+      final controller = RemoteController(client: client, prefs: prefs);
+
+      await controller.onResume();
+      await controller.onResume();
+      controller.startWatching();
+      expect(client.activeWatchers, 1);
+
+      controller.onPause();
+      expect(client.activeWatchers, 0);
+      controller.dispose();
+    });
   });
 
   testWidgets('status dot colour follows Presence', (tester) async {
