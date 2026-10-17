@@ -19,6 +19,11 @@ class _FakeTv {
   int controlConnections = 0;
   int openControlSockets = 0;
   int pointerConnections = 0;
+  int registerCount = 0;
+
+  /// Answers registration with the pairing prompt challenge instead of
+  /// accepting it, like a TV that does not know the client key.
+  bool challengePairing = false;
   final pointerFrames = <String>[];
   final _pointerSockets = <WebSocket>[];
 
@@ -41,19 +46,32 @@ class _FakeTv {
         final id = msg['id'];
         switch (msg['type']) {
           case 'register':
-            ws.add(jsonEncode({
-              'type': 'registered',
-              'id': id,
-              'payload': {'client-key': 'key'},
-            }));
+            registerCount++;
+            ws.add(jsonEncode(challengePairing
+                ? {
+                    'type': 'response',
+                    'id': id,
+                    'payload': {'pairingType': 'PROMPT', 'returnValue': true},
+                  }
+                : {
+                    'type': 'registered',
+                    'id': id,
+                    'payload': {'client-key': 'key'},
+                  }));
           case 'request':
+            final uri = msg['uri'];
             final payload =
-                msg['uri'] == 'ssap://com.webos.service.networkinput/getPointerInputSocket'
+                uri == 'ssap://com.webos.service.networkinput/getPointerInputSocket'
                     ? {'returnValue': true, 'socketPath': 'wss://127.0.0.1:3001/pointer'}
-                    : {
-                        'returnValue': true,
-                        'volumeStatus': {'volume': 12, 'muteStatus': false},
-                      };
+                    : uri == 'ssap://com.webos.service.connectionmanager/getinfo'
+                        ? {
+                            'returnValue': true,
+                            'wifiInfo': {'macAddress': 'AA:BB:CC:DD:EE:FF'},
+                          }
+                        : {
+                            'returnValue': true,
+                            'volumeStatus': {'volume': 12, 'muteStatus': false},
+                          };
             ws.add(jsonEncode({'type': 'response', 'id': id, 'payload': payload}));
         }
       }, onDone: () => openControlSockets--);
@@ -78,10 +96,12 @@ class _FakeTv {
       };
 }
 
-Future<Prefs> _prefs() async {
+// Paired by default: a pointer session never registers without a key.
+Future<Prefs> _prefs({String? clientKey = 'key'}) async {
   SharedPreferences.setMockInitialValues({});
   final prefs = await Prefs.load();
   await prefs.setTvIp('127.0.0.1');
+  if (clientKey != null) await prefs.setClientKey(clientKey);
   return prefs;
 }
 
@@ -419,6 +439,220 @@ void main() {
       expect(await client.getVolume(), isNull);
       await _until(() => pointer.state == PointerState.dead);
       expect(client.pointerSession(), isNot(same(pointer)));
+    });
+  });
+
+  group('late replies after a TV switch', () {
+    test('a command session registering after the address changed leaves key and MACs alone', () async {
+      final prefs = await _prefs(clientKey: null);
+      final session = CommandSession('127.0.0.1', prefs,
+          connector: tv.connector(delay: const Duration(milliseconds: 150)));
+      addTearDown(session.close);
+
+      await prefs.setTvIp('10.0.0.9');
+      await session.awaitReady(timeout: const Duration(seconds: 3));
+      expect(session.state, CmdState.ready);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(prefs.clientKey, isNull);
+      expect(prefs.tvMac, isEmpty);
+    });
+
+    test('the same session stores key and MAC while the address still matches', () async {
+      final prefs = await _prefs(clientKey: null);
+      final session = CommandSession('127.0.0.1', prefs, connector: tv.connector());
+      addTearDown(session.close);
+
+      await session.awaitReady(timeout: const Duration(seconds: 3));
+      await _until(() => prefs.tvMac.isNotEmpty);
+      expect(prefs.clientKey, 'key');
+      expect(prefs.tvMac, 'AA:BB:CC:DD:EE:FF');
+    });
+
+    test('a pointer session registering after the address changed keeps the new TV key', () async {
+      final prefs = await _prefs(clientKey: 'old');
+      final session = PointerSession('127.0.0.1', prefs,
+          connector: tv.connector(delay: const Duration(milliseconds: 150)));
+      addTearDown(session.close);
+
+      await prefs.setTvIp('10.0.0.9');
+      await session.waitUntilReady();
+      await _until(() => tv.registerCount == 1);
+      expect(prefs.clientKey, 'old');
+    });
+  });
+
+  group('pairing prompts', () {
+    test('without a client key the pointer never connects and the client stops retrying', () async {
+      final prefs = await _prefs(clientKey: null);
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: Duration.zero,
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p, connector: tv.connector());
+      });
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      expect(first.state, PointerState.dead);
+      expect(first.pairingStillMissing, isTrue);
+      for (var i = 0; i < 5; i++) {
+        expect(client.pointerSession(), same(first));
+      }
+      expect(await client.pressKey('UP'), isA<NeedsPairing>());
+      expect(created, 1);
+      expect(tv.controlConnections, 0);
+
+      await prefs.setClientKey('paired');
+      final next = client.pointerSession();
+      expect(next, isNot(same(first)));
+      expect(created, 2);
+      expect(await next.waitUntilReady(), isTrue);
+    });
+
+    test('a pairing challenge fails the pointer once and is not retried until the key changes', () async {
+      tv.challengePairing = true;
+      final prefs = await _prefs(clientKey: 'stale');
+      var created = 0;
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: Duration.zero,
+          pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p, connector: tv.connector());
+      });
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      await _until(() => first.state == PointerState.dead);
+      expect(first.pairingStillMissing, isTrue);
+      for (var i = 0; i < 5; i++) {
+        expect(client.pointerSession(), same(first));
+      }
+      expect(await client.pressKey('UP'), isA<NeedsPairing>());
+      expect(created, 1);
+      expect(tv.registerCount, 1);
+
+      await prefs.setClientKey('fresh');
+      expect(client.pointerSession(), isNot(same(first)));
+      expect(created, 2);
+    });
+
+    test('a command session that registered after the failure lifts the backoff', () async {
+      tv.challengePairing = true;
+      final prefs = await _prefs(clientKey: 'stale');
+      final client = WebOsClient(prefs,
+          pointerRetryBackoff: Duration.zero,
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p, connector: tv.connector()),
+          commandSessionFactory: (ip, p) => CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      final first = client.pointerSession();
+      await _until(() => first.state == PointerState.dead);
+
+      tv.challengePairing = false;
+      expect(await client.getVolume(), isNotNull);
+      expect(client.pointerSession(), isNot(same(first)));
+    });
+  });
+
+  group('command session churn', () {
+    test('a pointer still connecting survives the command session being replaced', () async {
+      final prefs = await _prefs();
+      var commands = 0;
+      final client = WebOsClient(prefs,
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p,
+              connector: tv.connector(delay: const Duration(milliseconds: 300))),
+          commandSessionFactory: (ip, p) => commands++ == 0
+              ? CommandSession(ip, p,
+                  connector: (_) => Completer<WebSocket>().future,
+                  connectGrace: const Duration(milliseconds: 50))
+              : CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      final stuck = client.getVolume();
+      final pointer = client.pointerSession();
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      expect(await client.getVolume(), isNotNull);
+      await stuck;
+      expect(client.pointerSession(), same(pointer));
+      expect(await pointer.waitUntilReady(), isTrue);
+    });
+
+    test('a pointer still connecting survives the command session dying', () async {
+      final prefs = await _prefs();
+      final client = WebOsClient(prefs,
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p,
+              connector: tv.connector(delay: const Duration(milliseconds: 300))),
+          commandSessionFactory: (ip, p) => CommandSession(ip, p,
+              connector: (_) => Future<WebSocket>.error(const SocketException('gone'))));
+      addTearDown(client.resetConnection);
+
+      final pointer = client.pointerSession();
+      expect(await client.getVolume(), isNull);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(pointer.state, PointerState.connecting);
+      expect(client.pointerSession(), same(pointer));
+      expect(await pointer.waitUntilReady(), isTrue);
+    });
+
+    test('a pointer past its connect grace is replaced when the command session is', () async {
+      final prefs = await _prefs();
+      var commands = 0;
+      var pointers = 0;
+      final client = WebOsClient(prefs,
+          pointerSessionFactory: (ip, p) {
+            pointers++;
+            return PointerSession(ip, p,
+                connector: (_) => Completer<WebSocket>().future,
+                connectGrace: const Duration(milliseconds: 50));
+          },
+          commandSessionFactory: (ip, p) => commands++ == 0
+              ? CommandSession(ip, p,
+                  connector: (_) => Completer<WebSocket>().future,
+                  connectGrace: const Duration(milliseconds: 50))
+              : CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      final stuck = client.getVolume();
+      final pointer = client.pointerSession();
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(pointer.isUsable, isFalse);
+
+      expect(await client.getVolume(), isNotNull);
+      await stuck;
+      expect(pointer.state, PointerState.dead);
+      expect(client.pointerSession(), isNot(same(pointer)));
+      expect(pointers, 2);
+    });
+
+    test('a replaced command session dying later does not drop the new pointer session', () async {
+      final prefs = await _prefs();
+      var commands = 0;
+      final client = WebOsClient(prefs,
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p, connector: tv.connector()),
+          commandSessionFactory: (ip, p) => commands++ == 0
+              ? CommandSession(ip, p,
+                  connector: (_) => Completer<WebSocket>().future,
+                  connectGrace: const Duration(milliseconds: 50))
+              : CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      final stuck = client.getVolume();
+      final pointer = client.pointerSession();
+      expect(await pointer.waitUntilReady(), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      // Replacing the stuck session closes it; its death notification runs
+      // afterwards and must not count as the live command session dying.
+      expect(await client.getVolume(), isNotNull);
+      await stuck;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(pointer.isAlive, isTrue);
+      expect(client.pointerSession(), same(pointer));
     });
   });
 }

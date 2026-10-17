@@ -78,6 +78,9 @@ class CommandSession {
   CmdState _state = CmdState.connecting;
   CmdState get state => _state;
 
+  /// When the TV last accepted this session's registration.
+  DateTime? registeredAt;
+
   WebSocket? _ws;
   String? deadReason;
 
@@ -146,12 +149,16 @@ class CommandSession {
     final payload = msg['payload'] as Map<String, dynamic>?;
 
     if (type == 'registered') {
+      registeredAt = DateTime.now();
+      // A reply that outlives a TV switch belongs to the old TV and must not
+      // overwrite the new one's key or MACs.
+      final current = ip == _prefs.tvIp;
       final key = payload?['client-key'] as String?;
-      if (key != null && key.isNotEmpty) {
+      if (current && key != null && key.isNotEmpty) {
         _prefs.setClientKey(key);
       }
       // Fewer than two means a pairing from before both MACs were kept.
-      if (macList(_prefs.tvMac).length < 2) {
+      if (current && macList(_prefs.tvMac).length < 2) {
         _ws?.add(encodeSsapMessage({
           'id': macLookupMessageId,
           'type': 'request',
@@ -174,6 +181,7 @@ class CommandSession {
     }
 
     if (type == 'response' && id == macLookupMessageId) {
+      if (ip != _prefs.tvIp) return;
       final merged = mergeMacs(_prefs.tvMac, extractMacAddresses(payload));
       if (merged != _prefs.tvMac) _prefs.setTvMac(merged);
       return;

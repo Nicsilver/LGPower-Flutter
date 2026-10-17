@@ -48,6 +48,12 @@ class PointerSession {
   })  : createdAt = DateTime.now(),
         _connector = connector ?? connectTrustAll {
     _handshakeTimer = Timer(handshakeTimeout, _fail);
+    _keyUsed = _prefs.clientKey;
+    if (_keyUsed == null || _keyUsed!.isEmpty) {
+      _needsPairing = true;
+      _fail();
+      return;
+    }
     _connect();
   }
 
@@ -90,6 +96,20 @@ class PointerSession {
   bool _controlClosingIntentionally = false;
 
   bool get isAlive => _state == PointerState.ready && _pointerWs != null;
+
+  // Registering without a valid key makes the TV show a pairing prompt, so
+  // this session never retries that: it stays dead until the command session
+  // has stored a new key.
+  bool _needsPairing = false;
+  String? _keyUsed;
+
+  /// True while a retry would only ask the TV for pairing again.
+  bool get pairingStillMissing =>
+      _needsPairing && (_prefs.clientKey ?? '') == (_keyUsed ?? '');
+
+  bool get isConnecting =>
+      _state == PointerState.connecting &&
+      DateTime.now().difference(createdAt) < connectGrace;
 
   /// A session mid-handshake is shared rather than replaced: a d-pad held
   /// down fires every 120 ms, and replacing the session on each press would
@@ -134,7 +154,7 @@ class PointerSession {
 
     if (type == 'registered') {
       final key = payload?['client-key'] as String?;
-      if (key != null && key.isNotEmpty) {
+      if (ip == _prefs.tvIp && key != null && key.isNotEmpty) {
         _prefs.setClientKey(key);
       }
       _controlWs?.add(encodeSsapMessage({
@@ -157,7 +177,15 @@ class PointerSession {
       return;
     }
 
+    // The TV is asking the user to accept a pairing prompt.
+    if (type == 'response' && id == regMessageId) {
+      _needsPairing = true;
+      _fail();
+      return;
+    }
+
     if (type == 'error') {
+      if (id == regMessageId) _needsPairing = true;
       _fail();
     }
   }

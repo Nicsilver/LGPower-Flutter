@@ -183,7 +183,9 @@ class WebOsClient {
     if (existing != null && existing.ip == tvIp && existing.isUsable) return existing;
     if (existing != null) {
       existing.close();
-      _dropPointer();
+      // The power watcher replaces a dying command session every few seconds
+      // while the TV wakes; a pointer session still connecting must survive that.
+      _dropPointer(where: (p) => p.ip != tvIp || (p.state != PointerState.dead && !p.isUsable));
     }
     final session = _commandSessionFactory(tvIp, prefs);
     _sharedCommandSession = session;
@@ -191,9 +193,19 @@ class WebOsClient {
     // keepalive is what notices a silent Wi-Fi drop; a pointer session that
     // outlived it can look usable while its frames vanish.
     unawaited(session.awaitDeath().then((_) {
-      if (identical(_sharedCommandSession, session)) _dropPointer();
+      if (identical(_sharedCommandSession, session)) {
+        _dropPointer(where: (p) => p.state != PointerState.dead && !p.isConnecting);
+      }
     }));
     return session;
+  }
+
+  // A pairing that was accepted since the pointer failed lifts the backoff
+  // even when the TV hands back the key the pointer already tried.
+  bool _pairingBlocked(PointerSession p) {
+    if (!p.pairingStillMissing) return false;
+    final since = p.handshakeFailedAt ?? p.createdAt;
+    return !(_sharedCommandSession?.registeredAt?.isAfter(since) ?? false);
   }
 
   /// The one pointer session that d-pad keys and the touchpad share. A live
@@ -204,6 +216,7 @@ class WebOsClient {
     final existing = _sharedPointerSession;
     if (existing != null && existing.ip == tvIp) {
       if (existing.isUsable) return existing;
+      if (_pairingBlocked(existing)) return existing;
       final failedAt = existing.handshakeFailedAt;
       if (failedAt != null && DateTime.now().difference(failedAt) < pointerRetryBackoff) {
         return existing;
@@ -222,8 +235,12 @@ class WebOsClient {
     pointerSession();
   }
 
-  void _dropPointer() {
-    _sharedPointerSession?.close();
+  // A dead session stays put when [where] is given: it carries the retry
+  // pause and the pairing backoff.
+  void _dropPointer({bool Function(PointerSession)? where}) {
+    final p = _sharedPointerSession;
+    if (p == null || (where != null && !where(p))) return;
+    p.close();
     _sharedPointerSession = null;
   }
 
@@ -255,6 +272,7 @@ class WebOsClient {
     final session = pointerSession();
     session.sendKey(keyCode);
     if (await session.waitUntilReady()) return const Success();
+    if (_pairingBlocked(session)) return const NeedsPairing();
     return const CmdError('Timeout. Is the TV on and reachable?');
   }
 
