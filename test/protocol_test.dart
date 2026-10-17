@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,6 +35,20 @@ void main() {
   // which would also break the real wss:// sockets under test here (dart:io
   // WebSocket.connect goes through HttpClient for the upgrade handshake).
   // shared_preferences' mock store doesn't need the binding.
+
+  // Without this, a missing fake TV shows up as nine unrelated "Can't connect"
+  // assertion failures instead of one actionable message.
+  setUpAll(() async {
+    try {
+      final probe = await Socket.connect(_tvIp, 3001,
+          timeout: const Duration(seconds: 2));
+      probe.destroy();
+    } on SocketException {
+      fail('No fake webOS TV on $_tvIp:3001. Start it first: cd '
+          r'C:\Programming\LGPowerWidget\tools\faketv && '
+          'python faketv.py --host 10.0.2.2 (or run with --exclude-tags faketv).');
+    }
+  });
 
   group('registration and pairing', () {
     test('registers with the fake TV, reaches READY, saves client_key', () async {
