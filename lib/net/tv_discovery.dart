@@ -48,8 +48,10 @@ Future<List<FoundTv>> discoverTvsDetailed() async {
   final results = <String>{};
   final locations = <String, String>{};
   try {
-    final primary = await _localIPv4();
-    final extra = (await _siteLocalAddresses())
+    // One lookup serves both the primary pick and the hotspot subnets.
+    final interfaces = await _interfaces();
+    final primary = _localIPv4(interfaces);
+    final extra = _siteLocalAddresses(interfaces)
         .where((a) => primary == null || _subnetOf(a) != _subnetOf(primary))
         .toList();
     await Future.wait([
@@ -259,13 +261,20 @@ Future<void> _portScan(String localIp, Set<String> results) async {
   }
 }
 
+Future<List<NetworkInterface>> _interfaces() async {
+  try {
+    return await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLoopback: false,
+    );
+  } catch (_) {
+    return const [];
+  }
+}
+
 /// First non-loopback IPv4 address, preferring an interface that looks like
 /// Wi-Fi/Ethernet over one that could be cellular.
-Future<String?> _localIPv4() async {
-  final interfaces = await NetworkInterface.list(
-    type: InternetAddressType.IPv4,
-    includeLoopback: false,
-  );
+String? _localIPv4(List<NetworkInterface> interfaces) {
   if (interfaces.isEmpty) return null;
 
   final lanNamePattern = RegExp(
@@ -290,24 +299,16 @@ Future<String?> _localIPv4() async {
 /// Every private IPv4 address the phone holds, one per /24. A hotspot is an
 /// up interface with a private address of its own (`swlan0`, `ap0`, …),
 /// which is how a TV tethered to the phone becomes reachable at all.
-Future<List<String>> _siteLocalAddresses() async {
-  try {
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLoopback: false,
-    );
-    final seen = <String>{};
-    final out = <String>[];
-    for (final iface in interfaces) {
-      for (final addr in iface.addresses) {
-        if (!_isSiteLocal(addr) || addr.isLinkLocal) continue;
-        if (seen.add(_subnetOf(addr.address))) out.add(addr.address);
-      }
+List<String> _siteLocalAddresses(List<NetworkInterface> interfaces) {
+  final seen = <String>{};
+  final out = <String>[];
+  for (final iface in interfaces) {
+    for (final addr in iface.addresses) {
+      if (!_isSiteLocal(addr) || addr.isLinkLocal) continue;
+      if (seen.add(_subnetOf(addr.address))) out.add(addr.address);
     }
-    return out;
-  } catch (_) {
-    return const [];
   }
+  return out;
 }
 
 bool _isSiteLocal(InternetAddress addr) {
