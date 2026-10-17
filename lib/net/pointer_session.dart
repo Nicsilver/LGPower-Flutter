@@ -129,6 +129,11 @@ class PointerSession {
   /// opposed to failing on its own.
   bool get retired => _closedByCaller;
 
+  /// The socket opened at some point, so every one-shot key handed to this
+  /// session was written to it.
+  bool get wasReady => _wasReady;
+  bool _wasReady = false;
+
   bool get isAlive => _state == PointerState.ready && _pointerWs != null;
 
   // Registering without a valid key makes the TV show a pairing prompt, so
@@ -251,6 +256,7 @@ class PointerSession {
       );
       _handshakeTimer?.cancel();
       _state = PointerState.ready;
+      _wasReady = true;
       _flushQueue();
       if (!_readyCompleter.isCompleted) _readyCompleter.complete();
     } catch (_) {

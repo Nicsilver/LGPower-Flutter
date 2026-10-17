@@ -303,10 +303,11 @@ class WebOsClient {
       if (_pairingBlocked(session)) return const NeedsPairing();
       // A session that was reset or replaced under the press, or whose socket
       // refused the frame after it had been up, never saw a handshake fail;
-      // one fresh session is worth a try before reporting a timeout.
+      // one fresh session is worth a try before reporting a timeout. One that
+      // had opened already wrote the key, and a second send would press twice.
       final worthRetry = oneShot &&
           session.handshakeFailedAt == null &&
-          (session.retired || !accepted) &&
+          (!accepted || (session.retired && !session.wasReady)) &&
           session.ip == tvIp;
       if (!worthRetry) break;
     }

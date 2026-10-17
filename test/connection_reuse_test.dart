@@ -169,6 +169,19 @@ Future<void> _until(bool Function() cond) async {
 List<String> _buttons(_FakeTv tv) =>
     tv.pointerFrames.where((f) => f.startsWith('type:button')).toList();
 
+/// Delivers like a normal session, then gets reset in the gap between the key
+/// write and the press reading the result.
+class _ResetAfterWriteSession extends PointerSession {
+  _ResetAfterWriteSession(super.ip, super.prefs, {super.connector});
+
+  @override
+  Future<bool> waitUntilReady({Duration timeout = PointerSession.defaultHandshakeTimeout}) async {
+    await super.waitUntilReady(timeout: timeout);
+    close();
+    return false;
+  }
+}
+
 void main() {
   // No TestWidgetsFlutterBinding: its HttpOverrides would turn the fake
   // TV's WebSocket upgrade into a 400.
@@ -338,6 +351,43 @@ void main() {
       expect(created, 2);
       expect(tv.pointerConnections, 1);
       expect(_buttons(tv), ['type:button\nname:VOLUMEUP\n\n', 'type:button\nname:VOLUMEDOWN\n\n']);
+    });
+
+    test('a press reset after its key went out is not sent again', () async {
+      final prefs = await _prefs();
+      var created = 0;
+      final client = WebOsClient(prefs, pointerSessionFactory: (ip, p) {
+        created++;
+        return created == 1
+            ? _ResetAfterWriteSession(ip, p, connector: tv.connector())
+            : PointerSession(ip, p, connector: tv.connector());
+      });
+      addTearDown(client.resetConnection);
+
+      expect(await client.pressKey('ENTER'), isA<CmdError>());
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(created, 1);
+      expect(_buttons(tv), ['type:button\nname:ENTER\n\n']);
+    });
+
+    test('a press cut off by a TV switch is not sent to the new TV', () async {
+      final prefs = await _prefs();
+      var created = 0;
+      final client = WebOsClient(prefs, pointerSessionFactory: (ip, p) {
+        created++;
+        return PointerSession(ip, p,
+            connector: tv.connector(delay: const Duration(milliseconds: 150)));
+      });
+      addTearDown(client.resetConnection);
+
+      final press = client.pressKey('ENTER');
+      await prefs.setTvIp('127.0.0.2');
+      client.resetConnection();
+
+      expect(await press, isA<CmdError>());
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(created, 1);
+      expect(_buttons(tv), isEmpty);
     });
 
     test('a press whose replacement session is reset too gives up instead of looping', () async {
