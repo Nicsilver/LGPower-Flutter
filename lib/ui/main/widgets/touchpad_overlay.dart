@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../../../core/haptics.dart';
 import '../../../net/pointer_session.dart';
@@ -37,8 +38,17 @@ class TouchpadController extends ChangeNotifier {
 
   // Phase 2 (locked-mode) multi-touch tracking.
   final Map<int, Offset> _pointers = {};
+
+  // Cursor travel is summed here and sent once per frame. A touch panel
+  // reports several times per frame (hundreds of events a second on a fast
+  // one), but Android hands the Kotlin app one batched event per frame, so
+  // one frame per vsync is the rate the TV is used to.
+  double _pendingDx = 0;
+  double _pendingDy = 0;
   double _dxCarry = 0;
   double _dyCarry = 0;
+  bool _flushScheduled = false;
+  bool _disposed = false;
   double _dragTotalDist = 0;
   bool _overlayDragging = false;
   bool _scrolling = false;
@@ -62,6 +72,7 @@ class TouchpadController extends ChangeNotifier {
     isLocked = false;
     _hasMoved = false;
     _moveAccumulator = 0;
+    _resetMoves();
     center = _toLocal(globalCenter);
     _lastGlobal = globalPointer;
     reveal.value = 0;
@@ -100,7 +111,41 @@ class TouchpadController extends ChangeNotifier {
       Haptics.selection();
       _moveAccumulator = 0;
     }
-    _pointer?.move(dx, dy);
+    _queueMove(dx, dy);
+  }
+
+  void _resetMoves() {
+    _pendingDx = 0;
+    _pendingDy = 0;
+    _dxCarry = 0;
+    _dyCarry = 0;
+  }
+
+  void _queueMove(double dx, double dy) {
+    _pendingDx += dx;
+    _pendingDy += dy;
+    if (_flushScheduled) return;
+    _flushScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _flushScheduled = false;
+      if (!_disposed) flushMoves();
+    });
+  }
+
+  /// Sends the travel gathered since the last frame. The fraction that does
+  /// not fit a whole unit stays in the carry so slow drags lose nothing.
+  void flushMoves() {
+    final totalDx = _pendingDx + _dxCarry;
+    final totalDy = _pendingDy + _dyCarry;
+    _pendingDx = 0;
+    _pendingDy = 0;
+    final sendDx = totalDx.truncate();
+    final sendDy = totalDy.truncate();
+    _dxCarry = totalDx - sendDx;
+    _dyCarry = totalDy - sendDy;
+    if (sendDx != 0 || sendDy != 0) {
+      _pointer?.move(sendDx.toDouble(), sendDy.toDouble());
+    }
   }
 
   void onButtonUp() {
@@ -109,6 +154,7 @@ class TouchpadController extends ChangeNotifier {
   }
 
   void _exit() {
+    flushMoves();
     _lockTimer?.cancel();
     active = false;
     isLocked = false;
@@ -118,6 +164,7 @@ class TouchpadController extends ChangeNotifier {
     _pointers.clear();
     _scrolling = false;
     _overlayDragging = false;
+    _resetMoves();
     notifyListeners();
   }
 
@@ -130,9 +177,9 @@ class TouchpadController extends ChangeNotifier {
       _dragTotalDist = 0;
       _overlayDragging = false;
       _scrolling = false;
-      _dxCarry = 0;
-      _dyCarry = 0;
+      _resetMoves();
     } else if (_pointers.length == 2) {
+      flushMoves();
       _scrolling = true;
       _overlayDragging = false;
       final ys = _pointers.values.map((o) => o.dy).toList();
@@ -163,26 +210,16 @@ class TouchpadController extends ChangeNotifier {
       _dragTotalDist += math.sqrt(dx * dx + dy * dy);
       if (_dragTotalDist >= _tapThresholdPx) {
         _overlayDragging = true;
-        _dxCarry = 0;
-        _dyCarry = 0;
+        _resetMoves();
       }
     }
-    if (_overlayDragging) {
-      final totalDx = dx + _dxCarry;
-      final totalDy = dy + _dyCarry;
-      final sendDx = totalDx.truncate();
-      final sendDy = totalDy.truncate();
-      _dxCarry = totalDx - sendDx;
-      _dyCarry = totalDy - sendDy;
-      if (sendDx != 0 || sendDy != 0) {
-        _pointer?.move(sendDx.toDouble(), sendDy.toDouble());
-      }
-    }
+    if (_overlayDragging) _queueMove(dx, dy);
   }
 
   void overlayPointerUp(int id) {
     if (!isLocked) return;
     final wasSingle = _pointers.length == 1;
+    flushMoves();
     _pointers.remove(id);
     if (_pointers.isEmpty) {
       if (wasSingle && !_overlayDragging && !_scrolling) {
@@ -201,16 +238,19 @@ class TouchpadController extends ChangeNotifier {
 
   void overlayBack() {
     Haptics.light();
+    flushMoves();
     _pointer?.sendKey('BACK');
   }
 
   void overlayClick() {
     Haptics.light();
+    flushMoves();
     _pointer?.click();
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _lockTimer?.cancel();
     reveal.dispose();
     super.dispose();
@@ -268,16 +308,20 @@ class TouchpadOverlayLayer extends StatelessWidget {
       builder: (context, _) {
         if (!controller.active) return const SizedBox.shrink();
         final theme = AppTheme.of(context);
+        // The gesture Listener sits under the buttons, not around them: a
+        // pointer that lands on a button is absorbed by its hit test, so the
+        // tap-to-click on the bare pad never fires on top of the button's own
+        // action.
         return Positioned.fill(
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (e) => controller.overlayPointerDown(e.pointer, e.position),
-            onPointerMove: (e) => controller.overlayPointerMove(e.pointer, e.position),
-            onPointerUp: (e) => controller.overlayPointerUp(e.pointer),
-            onPointerCancel: (e) => controller.overlayPointerUp(e.pointer),
-            child: Stack(
-              children: [
-                Positioned.fill(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (e) => controller.overlayPointerDown(e.pointer, e.position),
+                  onPointerMove: (e) => controller.overlayPointerMove(e.pointer, e.position),
+                  onPointerUp: (e) => controller.overlayPointerUp(e.pointer),
+                  onPointerCancel: (e) => controller.overlayPointerUp(e.pointer),
                   child: AnimatedBuilder(
                     animation: controller.reveal,
                     builder: (context, _) => CustomPaint(
@@ -289,28 +333,28 @@ class TouchpadOverlayLayer extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (controller.isLocked) ...[
-                  Positioned(
-                    top: 48,
-                    right: 24,
-                    child: _ExitButton(onTap: controller.exitTapped),
+              ),
+              if (controller.isLocked) ...[
+                Positioned(
+                  top: 48,
+                  right: 24,
+                  child: _ExitButton(onTap: controller.exitTapped),
+                ),
+                Positioned(
+                  left: 36,
+                  right: 36,
+                  bottom: 72,
+                  height: 72,
+                  child: Row(
+                    children: [
+                      _BackButton(theme: theme, onTap: controller.overlayBack),
+                      const SizedBox(width: 12),
+                      Expanded(child: _ClickButton(theme: theme, onTap: controller.overlayClick)),
+                    ],
                   ),
-                  Positioned(
-                    left: 36,
-                    right: 36,
-                    bottom: 72,
-                    height: 72,
-                    child: Row(
-                      children: [
-                        _BackButton(theme: theme, onTap: controller.overlayBack),
-                        const SizedBox(width: 12),
-                        Expanded(child: _ClickButton(theme: theme, onTap: controller.overlayClick)),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         );
       },
