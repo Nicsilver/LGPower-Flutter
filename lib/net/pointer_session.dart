@@ -59,7 +59,8 @@ class PointerSession {
     Duration handshakeTimeout = defaultHandshakeTimeout,
     this.staleAfter = const Duration(milliseconds: 1500),
   })  : createdAt = DateTime.now(),
-        _connector = connector ?? connectTrustAll {
+        _connector = connector ?? connectTrustAll,
+        _handshakeTimeout = handshakeTimeout {
     _handshakeTimer = Timer(handshakeTimeout, _fail);
     _keyUsed = _prefs.clientKey;
     if (_keyUsed == null || _keyUsed!.isEmpty) {
@@ -77,6 +78,7 @@ class PointerSession {
       : createdAt = DateTime.now(),
         connectGrace = const Duration(seconds: 10),
         staleAfter = const Duration(milliseconds: 1500),
+        _handshakeTimeout = defaultHandshakeTimeout,
         _connector = connectTrustAll {
     _keyUsed = _prefs.clientKey;
     _needsPairing = true;
@@ -88,10 +90,14 @@ class PointerSession {
   final SocketConnector _connector;
   final DateTime createdAt;
   final Duration connectGrace;
+  final Duration _handshakeTimeout;
 
-  /// Equal to [waitUntilReady]'s default on purpose: a press that has
-  /// reported a timeout must never have its key sent by a session that
-  /// opens afterwards.
+  /// How long the pointer's own handshake may take once it is allowed to
+  /// register. The wait for the command session to register before that is
+  /// not part of it, so two slow registrations in a row both fit; the whole
+  /// session is still over after [connectGrace], which is also how long a
+  /// key press waits for it, so a press that has reported a timeout never
+  /// has its key sent by a session that opens afterwards.
   static const Duration defaultHandshakeTimeout = Duration(seconds: 6);
 
   /// Queued cursor movement, clicks and held-key repeats older than this are
@@ -185,6 +191,7 @@ class PointerSession {
       );
       final gate = registerGate;
       if (gate != null) {
+        _restartHandshakeTimer(_graceLeft());
         final verdict = await gate();
         // Closed, timed out, or dropped by a TV in standby while waiting.
         if (_state != PointerState.connecting) return;
@@ -196,6 +203,8 @@ class PointerSession {
               return;
             }
             _keyUsed = _prefs.clientKey;
+            final left = _graceLeft();
+            _restartHandshakeTimer(left < _handshakeTimeout ? left : _handshakeTimeout);
           case RegisterGate.needsPairing:
             _needsPairing = true;
             _fail();
@@ -209,6 +218,13 @@ class PointerSession {
     } catch (_) {
       _fail();
     }
+  }
+
+  Duration _graceLeft() => connectGrace - DateTime.now().difference(createdAt);
+
+  void _restartHandshakeTimer(Duration after) {
+    _handshakeTimer?.cancel();
+    _handshakeTimer = Timer(after, _fail);
   }
 
   Future<void> _onControlMessage(dynamic raw) async {

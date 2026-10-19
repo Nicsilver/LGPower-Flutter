@@ -36,6 +36,9 @@ class _FakeTv {
   /// upgrade and then hangs up.
   bool closeOnRegister = false;
 
+  /// How long the TV takes to answer a registration.
+  Duration registerDelay = Duration.zero;
+
   /// Replaces the registration reply wholesale (malformed-message tests).
   String Function(Object? id)? registerReply;
 
@@ -95,7 +98,7 @@ class _FakeTv {
                 }));
               });
             }
-            ws.add(jsonEncode(challengePairing
+            final reply = jsonEncode(challengePairing
                 ? {
                     'type': 'response',
                     'id': id,
@@ -105,7 +108,16 @@ class _FakeTv {
                     'type': 'registered',
                     'id': id,
                     'payload': {'client-key': 'key'},
-                  }));
+                  });
+            if (registerDelay > Duration.zero) {
+              Timer(registerDelay, () {
+                try {
+                  ws.add(reply);
+                } catch (_) {}
+              });
+            } else {
+              ws.add(reply);
+            }
           case 'subscribe':
             ws.add(jsonEncode({...subscribeReply, 'id': id}));
           case 'request':
@@ -1426,6 +1438,40 @@ void main() {
 
       expect(await session.waitUntilReady(), isFalse);
       expect(session.state, PointerState.dead);
+    });
+  });
+
+  group('slow registrations', () {
+    // The pointer registers only once the command session has, so the TV's
+    // two registration delays add up; its own handshake deadline must not
+    // count the wait for the first one.
+    test('a TV that registers slowly twice in a row still gets the first key', () async {
+      tv.registerDelay = const Duration(milliseconds: 400);
+      final client = WebOsClient(await _prefs(),
+          commandSessionFactory: tv.commands(),
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p,
+              connector: tv.connector(),
+              handshakeTimeout: const Duration(milliseconds: 700),
+              connectGrace: const Duration(seconds: 3)));
+      addTearDown(client.resetConnection);
+
+      expect(await client.pressKey('UP'), isA<Success>());
+      await _until(() => _buttons(tv).length == 1);
+      expect(tv.registerCount, 2);
+    });
+
+    test('the pointer handshake alone is still held to its own deadline', () async {
+      tv.registerDelay = const Duration(milliseconds: 400);
+      final client = WebOsClient(await _prefs(),
+          commandSessionFactory: tv.commands(),
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p,
+              connector: tv.connector(),
+              handshakeTimeout: const Duration(milliseconds: 200),
+              connectGrace: const Duration(seconds: 3)));
+      addTearDown(client.resetConnection);
+
+      expect(await client.pressKey('UP'), isA<CmdError>());
+      expect(_buttons(tv), isEmpty);
     });
   });
 

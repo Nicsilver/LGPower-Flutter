@@ -255,7 +255,7 @@ class WebOsClient {
   // only registers once the command session has and never asks on its own.
   // Its TLS handshake still runs alongside the command session's.
   Future<RegisterGate> _awaitCommandRegistered(PointerSession pointer) async {
-    final deadline = pointer.createdAt.add(PointerSession.defaultHandshakeTimeout);
+    final deadline = pointer.createdAt.add(pointer.connectGrace);
     var connected = false;
     while (pointer.state == PointerState.connecting && pointer.ip == tvIp) {
       final shared = _sharedCommandSession;
@@ -354,7 +354,9 @@ class WebOsClient {
       var session = pointerSession();
       if (oneShot && attempt == 0) session = await _afterBackoff(session);
       final accepted = session.sendKey(keyCode, hold: hold);
-      if (accepted && await session.waitUntilReady()) return const Success();
+      if (accepted && await session.waitUntilReady(timeout: session.connectGrace)) {
+        return const Success();
+      }
       if (_pairingBlocked(session)) return const NeedsPairing();
       // A session that was reset or replaced under the press, or whose socket
       // refused the frame after it had been up, never saw a handshake fail;
