@@ -330,13 +330,20 @@ class RemoteController extends ChangeNotifier {
     await client.sendWakeOnLan();
     final hintAfter = prefs.wakeHintAfterS;
     final rounds = max(wakeRetries, hintAfter + 1);
+    var inFlight = false;
     for (var i = 0; i < rounds; i++) {
       if (_wakeGen != gen) return;
       if (i == hintAfter) {
         unawaited(prefs.setWakeHintAfterS(min(hintAfter + wakeHintStepS, wakeHintMaxS)));
         if (!_disposed) _wakeHintController.add(true);
       }
-      unawaited(_attemptWake(gen, action));
+      // Attempts that overlap all wait on the same connecting command session
+      // and are released together when it registers, so each would send the
+      // action.
+      if (!inFlight) {
+        inFlight = true;
+        unawaited(_attemptWake(gen, action).whenComplete(() => inFlight = false));
+      }
       await Future.delayed(const Duration(seconds: 1));
     }
   }
