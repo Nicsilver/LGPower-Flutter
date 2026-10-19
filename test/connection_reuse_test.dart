@@ -1095,6 +1095,28 @@ void main() {
       await _until(() => tv.openControlSockets == 0);
     });
 
+    test('a pointer session warmed beside the command session is dropped when pairing is asked', () async {
+      tv.challengePairing = true;
+      final prefs = await _prefs(clientKey: 'stale');
+      final pointers = <PointerSession>[];
+      final client = WebOsClient(prefs,
+          commandSessionFactory: (ip, p) => CommandSession(ip, p, connector: tv.connector()),
+          pointerSessionFactory: (ip, p) {
+            final s = PointerSession(ip, p,
+                connector: tv.connector(delay: const Duration(milliseconds: 800)));
+            pointers.add(s);
+            return s;
+          });
+      addTearDown(client.resetConnection);
+
+      client.warmPointer();
+      final stop = client.watchPower((_) {});
+      addTearDown(stop);
+
+      await _until(() => pointers.first.retired);
+      expect(pointers.first.state, PointerState.dead);
+    });
+
     test('the power watcher shows pairing and does not ask again straight away', () async {
       tv.challengePairing = true;
       tv.denyAfterChallenge = true;

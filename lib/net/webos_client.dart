@@ -674,6 +674,9 @@ class WebOsClient {
             final lifetime = DateTime.now().difference(since);
             delayMs = lifetime < const Duration(seconds: 2) ? 5000 : 0;
           case CmdState.needsPairing:
+            // The pointer session warmed alongside this one registered with the
+            // same key; a second registration could replace the prompt on screen.
+            _dropPointer(where: (p) => p.state == PointerState.connecting);
             _publish(const PresenceNeedsPairing(), listener);
             // The TV answers on this same socket once the prompt is accepted.
             while (!cancelCompleter.isCompleted && session.state == CmdState.needsPairing) {
