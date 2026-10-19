@@ -336,4 +336,26 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.android),
     );
   });
+
+  group('Contact row', () {
+    for (final limited in [false, true]) {
+      testWidgets('shows in About${limited ? ' (limited mode)' : ''}', (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final (_, client, controller) = await _harness();
+        await tester.pumpWidget(
+          AppTheme(
+            controller: controller,
+            child: MaterialApp(
+              home: SettingsScreen(client: client, limited: limited),
+            ),
+          ),
+        );
+        await tester.pump();
+        final subtitle = find.text('Send feedback or report a problem');
+        await tester.scrollUntilVisible(subtitle, 200, scrollable: find.byType(Scrollable).first);
+        expect(subtitle, findsOneWidget);
+        expect(find.text('Contact'), findsOneWidget);
+      });
+    }
+  });
 }

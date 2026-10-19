@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/contact_mail.dart';
 import '../../core/haptics.dart';
 import '../../core/right_pill.dart';
 import '../../core/tip_service.dart';
@@ -401,6 +402,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _contact() async {
+    final opened = await ContactMail.open();
+    if (!opened && mounted) {
+      showToast(context, 'No mail app found. Address copied: ${ContactMail.address}', long: true);
+    }
+  }
+
   void _openReleaseNotes() {
     showReleaseNotesDialog(
       context,
@@ -746,6 +754,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onTap: _openReleaseNotes,
           correctedChevron: false,
         ),
+        const RowDivider(),
+        _navRow(
+          theme,
+          label: 'Contact',
+          subtitle: 'Send feedback or report a problem',
+          onTap: _contact,
+          correctedChevron: false,
+        ),
       ],
     );
   }
@@ -757,6 +773,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ThemeConfig theme, {
     required String label,
     String? value,
+    String? subtitle,
     required VoidCallback onTap,
     required bool correctedChevron,
     bool chevron = true,
@@ -767,15 +784,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return InkWell(
       onTap: onTap,
       child: Container(
-        height: 52,
-        padding: const EdgeInsets.only(left: 16, right: 12),
+        constraints: const BoxConstraints(minHeight: 52),
+        padding: EdgeInsets.only(left: 16, right: 12, top: subtitle == null ? 0 : 8, bottom: subtitle == null ? 0 : 8),
         child: Row(
           children: [
             Expanded(
-              child: Text(
-                label,
-                style: TextStyle(fontSize: 15, color: theme.primaryText),
-              ),
+              child: subtitle == null
+                  ? Text(
+                      label,
+                      style: TextStyle(fontSize: 15, color: theme.primaryText),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          style: TextStyle(fontSize: 15, color: theme.primaryText),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: TextStyle(fontSize: 12, color: theme.secondaryText),
+                        ),
+                      ],
+                    ),
             ),
             if (value != null && value.isNotEmpty) ...[
               // Capped rather than flexible: a Flexible here is handed half the
