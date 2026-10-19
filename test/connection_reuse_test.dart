@@ -32,6 +32,10 @@ class _FakeTv {
   /// With [challengePairing]: follows the challenge with the denial error.
   bool denyAfterChallenge = false;
 
+  /// Closes the socket on registration, like a TV in standby that accepts the
+  /// upgrade and then hangs up.
+  bool closeOnRegister = false;
+
   /// Replaces the registration reply wholesale (malformed-message tests).
   String Function(Object? id)? registerReply;
 
@@ -65,6 +69,10 @@ class _FakeTv {
         switch (msg['type']) {
           case 'register':
             registerCount++;
+            if (closeOnRegister) {
+              ws.close();
+              return;
+            }
             final custom = registerReply;
             if (custom != null) {
               ws.add(custom(id));
@@ -916,6 +924,105 @@ void main() {
       final next = client.pointerSession();
       expect(next, isNot(same(first)));
       expect(await next.waitUntilReady(), isTrue);
+    });
+  });
+
+  group('command gate after a stalled command connect', () {
+    SocketConnector stalls() => (_) =>
+        Future<WebSocket>.delayed(const Duration(milliseconds: 100))
+            .then((_) => throw const SocketException('stalled'));
+
+    // The power watcher's session is the shared one when the key is pressed.
+    Future<(WebOsClient, List<CommandSession>)> clientWith(
+        Prefs prefs, SocketConnector Function(int n) connectorFor) async {
+      final commands = <CommandSession>[];
+      final client = WebOsClient(prefs,
+          commandSessionFactory: (ip, p) {
+            final s = CommandSession(ip, p, connector: connectorFor(commands.length));
+            commands.add(s);
+            return s;
+          },
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+      return (client, commands);
+    }
+
+    test('a command session that died before opening is replaced once and the key lands', () async {
+      final (client, commands) =
+          await clientWith(await _prefs(), (n) => n == 0 ? stalls() : tv.connector());
+
+      final watcherRound = client.getVolume();
+      final press = client.pressKey('UP');
+      expect(await press, isA<Success>());
+      expect(await watcherRound, isNull);
+
+      expect(commands, hasLength(2));
+      expect(commands.first.opened, isFalse);
+      expect(commands.last.opened, isTrue);
+      // One command socket plus the pointer's own registration socket.
+      expect(tv.controlConnections, 2);
+      expect(tv.registerCount, 2);
+      await _until(() => tv.openControlSockets == 1);
+      await _until(() => _buttons(tv).length == 1);
+      expect(tv.pointerConnections, 1);
+      // The replacement is the shared one: no further command session follows.
+      expect(await client.getVolume(), isNotNull);
+      expect(commands, hasLength(2));
+    });
+
+    test('a second stall does not open a third command session', () async {
+      final (client, commands) = await clientWith(await _prefs(), (_) => stalls());
+
+      final watcherRound = client.getVolume();
+      expect(await client.pressKey('UP'), isA<CmdError>());
+      await watcherRound;
+
+      expect(commands, hasLength(2));
+      expect(tv.registerCount, 0);
+      expect(tv.pointerConnections, 0);
+    });
+
+    test('a command session that opened and then died is left to the watcher', () async {
+      tv.closeOnRegister = true;
+      final (client, commands) = await clientWith(await _prefs(), (_) => tv.connector());
+
+      final watcherRound = client.getVolume();
+      expect(await client.pressKey('UP'), isA<CmdError>());
+      await watcherRound;
+
+      expect(commands.first.opened, isTrue);
+      expect(commands, hasLength(1));
+      expect(tv.registerCount, 1);
+      expect(_buttons(tv), isEmpty);
+    });
+
+    test('a rejected pairing is left to the watcher', () async {
+      tv.rejectRegistration = true;
+      final (client, commands) = await clientWith(await _prefs(), (_) => tv.connector());
+
+      final watcherRound = client.getVolume();
+      await client.pressKey('UP');
+      await watcherRound;
+
+      expect(commands.first.pairingRejected, isTrue);
+      expect(commands, hasLength(1));
+      expect(tv.registerCount, 1);
+      expect(_buttons(tv), isEmpty);
+    });
+
+    test('a stale key after a stalled connect still shows one prompt', () async {
+      tv.challengePairing = true;
+      final (client, commands) = await clientWith(
+          await _prefs(clientKey: 'stale'), (n) => n == 0 ? stalls() : tv.connector());
+
+      final watcherRound = client.getVolume();
+      expect(await client.pressKey('UP'), isA<NeedsPairing>());
+      await watcherRound;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      expect(commands, hasLength(2));
+      expect(tv.registerCount, 1);
+      expect(tv.pointerConnections, 0);
     });
   });
 

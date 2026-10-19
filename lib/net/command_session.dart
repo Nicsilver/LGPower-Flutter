@@ -88,6 +88,11 @@ class CommandSession {
   /// out), as opposed to the socket just dropping.
   bool pairingRejected = false;
 
+  /// The socket completed its upgrade. A session that died without getting
+  /// this far stalled in connect/TLS, which says nothing about the TV being
+  /// in standby.
+  bool opened = false;
+
   final _idSeq = SsapIdSequence();
   final _pending = <String, Completer<CmdReply>>{};
   final _subscriptions = <String, void Function(Map<String, dynamic>?)>{};
@@ -119,6 +124,7 @@ class CommandSession {
       }
       ws.pingInterval = const Duration(seconds: 15);
       _ws = ws;
+      opened = true;
       ws.listen(_onMessage, onDone: _onDone, onError: _onError, cancelOnError: true);
       ws.add(encodeSsapMessage(buildRegistration(_prefs.clientKey)));
     } catch (e) {

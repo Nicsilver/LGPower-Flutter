@@ -263,9 +263,14 @@ class WebOsClient {
       final CommandSession session;
       if (mine && shared.state == CmdState.needsPairing) {
         return RegisterGate.needsPairing;
-      } else if (mine && shared.state == CmdState.dead) {
-        // Retrying is the power watcher's job, at its own pace: a connect from
-        // here would add one per key press against a TV in standby.
+      } else if (mine &&
+          shared.state == CmdState.dead &&
+          (shared.opened || shared.pairingRejected)) {
+        // A session that opened and then died (a TV in standby accepts the
+        // upgrade and closes) is the power watcher's to retry at its own
+        // pace: a connect from here would add one per key press. One that
+        // never opened stalled in connect/TLS, so it falls through to the
+        // single replacement below.
         return RegisterGate.fail;
       } else if (mine && shared.isUsable) {
         session = shared;
