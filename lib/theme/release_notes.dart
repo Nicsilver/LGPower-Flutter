@@ -36,6 +36,13 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(54, '1.41.0', '2026-10-20', [
+      'Buttons and the touchpad respond faster, especially the first press after unlocking the phone',
+      'Fixed presses that sometimes did nothing after coming back to the app',
+      'Click, Back and Exit in the locked touchpad now send exactly one action, and the cursor moves more smoothly',
+      'Settings and the tip button can be opened from the setup screen, before a TV is paired',
+      'New: Settings > About > Contact opens an email to the developer',
+    ]),
     Release(53, '1.40.7', '2026-10-16', [
       'The remote fits on phones around 400 points wide instead of cutting off the right-hand buttons',
       'Removed a stray dot on the channel-up button',
