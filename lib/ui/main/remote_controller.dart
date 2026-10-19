@@ -177,9 +177,9 @@ class RemoteController extends ChangeNotifier {
       return;
     }
     _watching = true;
-    // The pointer socket doesn't depend on the command socket, so it connects
-    // alongside it instead of waiting for the "TV is on" report; a TV that is
-    // off just fails it quietly.
+    // Starts the pointer's TLS handshake alongside the command session's
+    // instead of after the "TV is on" report; it registers once the command
+    // session has.
     client.warmPointer();
     _stopWatching = client.watchPower(_applyPresence);
   }

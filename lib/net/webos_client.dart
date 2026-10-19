@@ -244,14 +244,64 @@ class WebOsClient {
     final session = promptShowing
         ? PointerSession.blocked(tvIp, prefs)
         : _pointerSessionFactory(tvIp, prefs);
+    if (!promptShowing) session.registerGate = () => _awaitCommandRegistered(session);
     _sharedPointerSession = session;
     return session;
+  }
+
+  // The pointer registers with the same key as the command session. A key the
+  // TV doesn't know turns every registration into a pairing prompt, and two at
+  // once can show two prompts or have one replace the other, so the pointer
+  // only registers once the command session has and never asks on its own.
+  // Its TLS handshake still runs alongside the command session's.
+  Future<RegisterGate> _awaitCommandRegistered(PointerSession pointer) async {
+    final deadline = pointer.createdAt.add(PointerSession.defaultHandshakeTimeout);
+    var connected = false;
+    while (pointer.state == PointerState.connecting && pointer.ip == tvIp) {
+      final shared = _sharedCommandSession;
+      final mine = shared != null && shared.ip == pointer.ip;
+      final CommandSession session;
+      if (mine && shared.state == CmdState.needsPairing) {
+        return RegisterGate.needsPairing;
+      } else if (mine && shared.state == CmdState.dead) {
+        // Retrying is the power watcher's job, at its own pace: a connect from
+        // here would add one per key press against a TV in standby.
+        return RegisterGate.fail;
+      } else if (mine && shared.isUsable) {
+        session = shared;
+      } else if (!connected) {
+        // None yet, or one stuck past its connect grace.
+        connected = true;
+        session = _commandSession();
+      } else {
+        return RegisterGate.fail;
+      }
+      switch (session.state) {
+        case CmdState.ready:
+          return RegisterGate.register;
+        case CmdState.needsPairing:
+          return RegisterGate.needsPairing;
+        case CmdState.dead:
+          return RegisterGate.fail;
+        case CmdState.connecting:
+          final graceEnd = session.createdAt.add(session.connectGrace);
+          final until = graceEnd.isBefore(deadline) ? graceEnd : deadline;
+          final wait = until.difference(DateTime.now());
+          if (wait <= Duration.zero) return RegisterGate.fail;
+          // Settles on any outcome, including the session being replaced; the
+          // next round looks at whichever one is shared by then.
+          await session.awaitReady(timeout: wait);
+      }
+    }
+    return RegisterGate.fail;
   }
 
   /// Opens the pointer connection ahead of the first key or touch so the
   /// two TLS handshakes are already done when the user reaches for the remote.
   void warmPointer() {
-    if (tvIp.isEmpty) return;
+    // Without a key the first registration is the pairing itself, and that
+    // belongs to the command session.
+    if (tvIp.isEmpty || (prefs.clientKey ?? '').isEmpty) return;
     pointerSession();
   }
 
@@ -674,9 +724,6 @@ class WebOsClient {
             final lifetime = DateTime.now().difference(since);
             delayMs = lifetime < const Duration(seconds: 2) ? 5000 : 0;
           case CmdState.needsPairing:
-            // The pointer session warmed alongside this one registered with the
-            // same key; a second registration could replace the prompt on screen.
-            _dropPointer(where: (p) => p.state == PointerState.connecting);
             _publish(const PresenceNeedsPairing(), listener);
             // The TV answers on this same socket once the prompt is accepted.
             while (!cancelCompleter.isCompleted && session.state == CmdState.needsPairing) {

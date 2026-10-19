@@ -10,6 +10,9 @@ const String _pointerSocketUri =
 
 enum PointerState { connecting, ready, dead }
 
+/// What [PointerSession.registerGate] decided about registering.
+enum RegisterGate { register, needsPairing, fail }
+
 class _Frame {
   _Frame.raw(this.kind, this.raw, {this.hold})
       : dx = 0,
@@ -101,6 +104,11 @@ class PointerSession {
   PointerState _state = PointerState.connecting;
   PointerState get state => _state;
 
+  /// Asked once the control socket is open, before registering on it. Set by
+  /// [WebOsClient] right after constructing the session, which is before
+  /// [_connect] gets past its first await.
+  Future<RegisterGate> Function()? registerGate;
+
   /// Set when the handshake itself failed (a standby TV accepts the upgrade
   /// and then closes it), not when an established session dropped or was
   /// closed by us.
@@ -175,6 +183,28 @@ class PointerSession {
         onError: (_) => _onControlDropped(),
         cancelOnError: true,
       );
+      final gate = registerGate;
+      if (gate != null) {
+        final verdict = await gate();
+        // Closed, timed out, or dropped by a TV in standby while waiting.
+        if (_state != PointerState.connecting) return;
+        switch (verdict) {
+          case RegisterGate.register:
+            // Registering without a key is a pairing request.
+            if ((_prefs.clientKey ?? '').isEmpty) {
+              _fail();
+              return;
+            }
+            _keyUsed = _prefs.clientKey;
+          case RegisterGate.needsPairing:
+            _needsPairing = true;
+            _fail();
+            return;
+          case RegisterGate.fail:
+            _fail();
+            return;
+        }
+      }
       ws.add(encodeSsapMessage(buildRegistration(_prefs.clientKey)));
     } catch (_) {
       _fail();
