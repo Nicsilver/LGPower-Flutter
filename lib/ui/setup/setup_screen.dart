@@ -235,9 +235,12 @@ class _SetupScreenState extends State<SetupScreen> {
       // Back to the remote, which re-reads the active TV on return
       Navigator.of(context).popUntil((route) => route.isFirst);
     } else {
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
+      // The remote takes over this client: it already holds the command
+      // session pairing and the app list went through, and a second client
+      // would leave that one open for the life of the process.
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => MainScreen(client: client, prefs: prefs)),
+      );
     }
   }
 
