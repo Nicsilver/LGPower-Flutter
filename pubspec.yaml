@@ -44,6 +44,8 @@ dependencies:
   wakelock_plus: ^1.8.0
   flutter_displaymode: ^0.7.0
   in_app_purchase: ^3.3.1
+  url_launcher: ^6.3.3
+  device_info_plus: ^13.3.0
 
 dev_dependencies:
   flutter_test:
