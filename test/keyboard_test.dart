@@ -140,7 +140,9 @@ void main() {
 
     test('keyboard focus is read from currentWidget', () {
       expect(parseKeyboardFocus(null), KeyboardFocus.unknown);
-      expect(parseKeyboardFocus({'subscribed': true}), KeyboardFocus.none);
+      // Only an explicit focus:false may raise the hint.
+      expect(parseKeyboardFocus({'subscribed': true}), KeyboardFocus.unknown);
+      expect(parseKeyboardFocus({'currentWidget': {}}), KeyboardFocus.unknown);
       expect(
         parseKeyboardFocus({
           'currentWidget': {'focus': true, 'contentType': 'text'},
@@ -188,6 +190,19 @@ void main() {
       addTearDown(session.close);
       final reply = await session.send('ssap://com.webos.service.ime/insertText');
       expect((reply as CmdReplyErr).message, '401 insufficient permissions');
+    });
+
+    test('a top-level error next to returnValue true is still a success', () async {
+      tv.insertTextReply = (id) => {
+            'type': 'response',
+            'id': id,
+            'error': 'harmless note',
+            'payload': <String, dynamic>{'returnValue': true},
+          };
+      final session = tv.sessions('127.0.0.1', await _prefs());
+      addTearDown(session.close);
+      final reply = await session.send('ssap://com.webos.service.ime/insertText');
+      expect(reply, isA<CmdReplyOk>());
     });
 
     test('subscribe hands the whole frame to onFrame, errors included', () async {
@@ -259,6 +274,33 @@ void main() {
       ]);
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(tv.unsubscribed, hasLength(1));
+    });
+
+    test('TV identifiers are redacted', () {
+      final text = trimFrame({
+        'payload': {
+          'client-key': 'secret-key',
+          'device_id': 'aa:bb:cc:dd:ee:ff',
+          'serialNumber': '123ABC',
+          'macAddress': '11-22-33-44-55-66',
+          'ip': '192.168.1.157',
+          'note': 'wired 0a:1b:2c:3d:4e:5f up',
+          'model_name': 'HE_DTV_W24O_AFABATAA',
+          'major_ver': '33',
+        },
+      }, max: 2000);
+      for (final secret in [
+        'secret-key',
+        'aa:bb:cc:dd:ee:ff',
+        '123ABC',
+        '11-22-33-44-55-66',
+        '192.168.1.157',
+        '0a:1b:2c:3d:4e:5f',
+      ]) {
+        expect(text, isNot(contains(secret)));
+      }
+      expect(text, contains('HE_DTV_W24O_AFABATAA'));
+      expect(text, contains('"major_ver":"33"'));
     });
 
     test('long frames are cut', () {

@@ -1,19 +1,24 @@
 import 'ssap_messages.dart';
 
-const String keyboardPermissionLine = "This TV doesn't let the app type.";
+const String keyboardPermissionLine = "This TV doesn't allow typing from this app";
 const String keyboardNoFocusHint = 'Select a text field on the TV first';
 
 /// What the TV's `registerRemoteKeyboard` subscription says about text input.
 enum KeyboardFocus { unknown, focused, none }
 
-/// The TV's first reply carries `currentWidget` only while a text field has
-/// focus, and later pushes always carry it, so a reply without one means
-/// nothing is focused.
+/// Only an explicit `focus:false` counts as "no field focused". The research
+/// behind the subscription comes from the open-source IME, where
+/// `currentWidget` and each of its keys are left out when not valid; LG's
+/// production keyboard is closed, and a false hint on a TV that types fine
+/// is worse than no hint.
 KeyboardFocus parseKeyboardFocus(Map<String, dynamic>? payload) {
-  if (payload == null) return KeyboardFocus.unknown;
-  final widget = payload['currentWidget'];
-  if (widget is! Map) return KeyboardFocus.none;
-  return widget['focus'] == true ? KeyboardFocus.focused : KeyboardFocus.none;
+  final widget = payload?['currentWidget'];
+  if (widget is! Map) return KeyboardFocus.unknown;
+  return switch (widget['focus']) {
+    true => KeyboardFocus.focused,
+    false => KeyboardFocus.none,
+    _ => KeyboardFocus.unknown,
+  };
 }
 
 /// The sheet line for a failed `insertText`: a plain sentence for a

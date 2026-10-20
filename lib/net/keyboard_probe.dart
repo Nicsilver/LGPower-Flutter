@@ -159,7 +159,8 @@ class KeyboardProbe {
   String _stamp() => '+${(_clock.elapsedMilliseconds / 1000).toStringAsFixed(1)}s';
 }
 
-/// One frame as a single line: the client key never leaves the phone, and a
+/// One frame as a single line: the client key and the TV's identifiers
+/// (MAC, device id, serial, address) never leave the phone, and a
 /// long frame (system info, app lists) is cut so a report stays pasteable.
 String trimFrame(Map<String, dynamic> frame, {int max = 500}) {
   final text = jsonEncode(_redact(frame));
@@ -167,13 +168,31 @@ String trimFrame(Map<String, dynamic> frame, {int max = 500}) {
   return '${text.substring(0, max)}... (${text.length - max} more characters)';
 }
 
+// getCurrentSWInformation's device_id is the TV's MAC, so MAC-shaped values
+// are caught wherever they turn up, not only under known keys.
+final _macPattern = RegExp(r'([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}');
+
+bool _sensitiveKey(String key) {
+  final k = key.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+  return k == 'clientkey' ||
+      k == 'ip' ||
+      k.contains('ipaddress') ||
+      k.contains('mac') ||
+      k.contains('serial') ||
+      k.contains('deviceid') ||
+      k.contains('uuid');
+}
+
 Object? _redact(Object? value) {
   if (value is Map) {
     return {
       for (final e in value.entries)
-        e.key: e.key == 'client-key' ? '<redacted>' : _redact(e.value),
+        e.key: e.key is String && _sensitiveKey(e.key as String)
+            ? '<redacted>'
+            : _redact(e.value),
     };
   }
   if (value is List) return [for (final e in value) _redact(e)];
+  if (value is String) return value.replaceAll(_macPattern, '<redacted>');
   return value;
 }

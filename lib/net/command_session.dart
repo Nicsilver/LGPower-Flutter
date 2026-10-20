@@ -221,7 +221,11 @@ class CommandSession {
       final completer = _pending.remove(id);
       if (completer == null) return;
       final returnValue = payload?['returnValue'] as bool? ?? true;
-      if (returnValue == false || msg['error'] is String) {
+      // A top-level error only counts when the payload does not itself say
+      // the call succeeded, so a TV that adds a stray `error` to a good reply
+      // does not break pairing, power or volume calls.
+      final payloadOk = payload?['returnValue'] == true;
+      if (returnValue == false || (msg['error'] is String && !payloadOk)) {
         final errorText = ssapErrorText(msg);
         completer.complete(CmdReplyErr(
           errorText.isEmpty ? 'Command rejected by TV' : errorText,
