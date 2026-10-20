@@ -25,6 +25,7 @@ import '../widgets/release_notes_dialog.dart';
 import '../widgets/section.dart';
 import '../widgets/spotlight_tour.dart';
 import '../widgets/warning_sheet.dart';
+import 'keyboard_test_screen.dart';
 import 'service_remote_screen.dart';
 import 'theme_editor_screen.dart';
 import 'tv_detail_screen.dart';
@@ -409,6 +410,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // Without a pairing there is no TV for the test to talk to.
+  bool get _paired {
+    final prefs = widget.client.prefs;
+    return prefs.tvIp.isNotEmpty && (prefs.clientKey ?? '').isNotEmpty;
+  }
+
+  void _openKeyboardTest() {
+    Haptics.light();
+    unawaited(Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => KeyboardTestScreen(client: widget.client)),
+    ));
+  }
+
   void _openReleaseNotes() {
     showReleaseNotesDialog(
       context,
@@ -737,7 +751,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _aboutGroup(ThemeConfig theme) {
     return Column(
       children: [
-        AboutHeader(version: _version),
+        AboutHeader(
+          version: _version,
+          onLongPress: _paired ? _openKeyboardTest : null,
+        ),
         const RowDivider(),
         if (!widget.limited) ...[
           _navRow(

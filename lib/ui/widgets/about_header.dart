@@ -9,9 +9,12 @@ import 'tip_sheet.dart';
 /// App card at the top of Settings > About: icon, name, version and, where
 /// tipping is on offer, the tip button.
 class AboutHeader extends StatelessWidget {
-  const AboutHeader({super.key, required this.version});
+  const AboutHeader({super.key, required this.version, this.onLongPress});
 
   final String version;
+
+  /// Opens the hidden keyboard test.
+  final VoidCallback? onLongPress;
 
   String _line(bool tipped) {
     if (version.isEmpty) return tipped ? 'Thanks for the tip!' : 'Free, no ads';
@@ -29,9 +32,12 @@ class AboutHeader extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: EdgeInsets.fromLTRB(16, 16, 16, canTip ? 16 : 14),
-          child: Row(
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onLongPress: onLongPress,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, canTip ? 16 : 14),
+            child: Row(
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
@@ -59,6 +65,7 @@ class AboutHeader extends StatelessWidget {
                 ),
               ),
             ],
+          ),
           ),
         ),
         if (canTip)

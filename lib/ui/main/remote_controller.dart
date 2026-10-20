@@ -273,6 +273,15 @@ class RemoteController extends ChangeNotifier {
     _handleResult(result);
   }
 
+  /// Like [sendCommand], but a failure other than pairing goes back to the
+  /// caller to show where the user is looking instead of as a toast.
+  Future<Result> sendCommandForResult(Future<Result> Function() block) async {
+    Haptics.light();
+    final result = await block();
+    if (result is NeedsPairing) _handleResult(result);
+    return result;
+  }
+
   void _handleResult(Result result) {
     if (_disposed) return; // the toast stream is closed by then
     switch (result) {

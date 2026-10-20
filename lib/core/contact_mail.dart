@@ -36,7 +36,7 @@ class ContactMail {
   /// clipboard so the caller can say so.
   static Future<bool> open() async {
     final package = await PackageInfo.fromPlatform();
-    final (os, phone) = await _device();
+    final (os, phone) = await deviceInfo();
     final mailto = uri(
       subject: subject(appName: package.appName, version: package.version),
       body: body(
@@ -57,7 +57,7 @@ class ContactMail {
     return false;
   }
 
-  static Future<(String os, String phone)> _device() async {
+  static Future<(String os, String phone)> deviceInfo() async {
     try {
       final plugin = DeviceInfoPlugin();
       if (Platform.isAndroid) {

@@ -12,6 +12,7 @@ import '../core/prefs.dart';
 import '../core/tv_store.dart';
 import '../core/wake_action.dart';
 import 'command_session.dart';
+import 'keyboard.dart';
 import 'pointer_session.dart';
 import 'wol.dart' as wol;
 
@@ -663,12 +664,32 @@ class WebOsClient {
   Future<Result> launchApp(String id) =>
       _execute('ssap://system.launcher/launch', payload: {'id': id});
 
-  // No focus detection, no character-by-character sending, no enter key --
-  // fire-and-forget insertText is all the TV API offers for this app.
   Future<Result> sendText(String text) => _execute(
         'ssap://com.webos.service.ime/insertText',
-        payload: {'text': text, 'replace': 0},
+        payload: {'text': text, 'replace': false},
       );
+
+  /// Holds the TV's remote-keyboard subscription on the shared command
+  /// session and reports whether a text field has focus. Returns the cancel
+  /// function; a session that is not ready in time just never reports.
+  Future<void Function()> watchKeyboard(void Function(KeyboardFocus) listener) async {
+    if (tvIp.isEmpty) return () {};
+    final session = _commandSession();
+    await session.awaitReady(timeout: const Duration(seconds: 4));
+    final id = session.subscribe(
+      'ssap://com.webos.service.ime/registerRemoteKeyboard',
+      (payload) {
+        if (payload != null) listener(parseKeyboardFocus(payload));
+      },
+    );
+    return () {
+      if (id != null) session.unsubscribe(id);
+    };
+  }
+
+  /// The shared command session, for the keyboard test, which has to see raw
+  /// frames the typed methods above throw away.
+  CommandSession diagnosticSession() => _commandSession();
 
   Future<String?> getMacFromDevice() async {
     if (tvIp.isEmpty) return null;

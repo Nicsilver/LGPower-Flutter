@@ -16,8 +16,11 @@ sealed class CmdReply {
 }
 
 class CmdReplyOk extends CmdReply {
-  const CmdReplyOk(this.payload);
+  const CmdReplyOk(this.payload, {this.raw});
   final Map<String, dynamic> payload;
+
+  /// The whole frame as the TV sent it; only the keyboard test reads it.
+  final Map<String, dynamic>? raw;
 }
 
 class CmdReplyNeedsPairing extends CmdReply {
@@ -25,8 +28,9 @@ class CmdReplyNeedsPairing extends CmdReply {
 }
 
 class CmdReplyErr extends CmdReply {
-  const CmdReplyErr(this.message);
+  const CmdReplyErr(this.message, {this.raw});
   final String message;
+  final Map<String, dynamic>? raw;
 }
 
 const String _getInfoUri = 'ssap://com.webos.service.connectionmanager/getinfo';
@@ -81,6 +85,10 @@ class CommandSession {
   /// When the TV last accepted this session's registration.
   DateTime? registeredAt;
 
+  /// The TV's `registered` frame. Holds the client key, so it is for
+  /// diagnostics that redact it.
+  Map<String, dynamic>? registeredFrame;
+
   WebSocket? _ws;
   String? deadReason;
 
@@ -96,6 +104,7 @@ class CommandSession {
   final _idSeq = SsapIdSequence();
   final _pending = <String, Completer<CmdReply>>{};
   final _subscriptions = <String, void Function(Map<String, dynamic>?)>{};
+  final _subscriptionFrameTaps = <String, void Function(Map<String, dynamic> frame)>{};
   final _stateSettled = Completer<void>();
   final _deathCompleter = Completer<void>();
 
@@ -162,6 +171,7 @@ class CommandSession {
 
     if (type == 'registered') {
       registeredAt = DateTime.now();
+      registeredFrame = msg;
       // A reply that outlives a TV switch belongs to the old TV and must not
       // overwrite the new one's key or MACs.
       final current = ip == _prefs.tvIp;
@@ -202,6 +212,7 @@ class CommandSession {
     if (id != null &&
         (type == 'response' || type == 'error') &&
         _subscriptions.containsKey(id)) {
+      _subscriptionFrameTaps[id]?.call(msg);
       _subscriptions[id]!(type == 'response' ? payload : null);
       return;
     }
@@ -210,13 +221,14 @@ class CommandSession {
       final completer = _pending.remove(id);
       if (completer == null) return;
       final returnValue = payload?['returnValue'] as bool? ?? true;
-      if (returnValue == false) {
-        final errorText = (payload?['errorText'] as String?) ?? '';
+      if (returnValue == false || msg['error'] is String) {
+        final errorText = ssapErrorText(msg);
         completer.complete(CmdReplyErr(
           errorText.isEmpty ? 'Command rejected by TV' : errorText,
+          raw: msg,
         ));
       } else {
-        completer.complete(CmdReplyOk(payload ?? const {}));
+        completer.complete(CmdReplyOk(payload ?? const {}, raw: msg));
       }
       return;
     }
@@ -224,7 +236,7 @@ class CommandSession {
     // Denied or timed-out pairing prompt. Left alone the session would sit in
     // needsPairing for good, with nothing on the TV left to accept.
     if (type == 'error' && id == regMessageId) {
-      final errorText = (payload?['errorText'] as String?) ?? '';
+      final errorText = ssapErrorText(msg);
       deadReason = errorText.isEmpty ? 'Pairing was not accepted' : errorText;
       pairingRejected = true;
       final ws = _ws;
@@ -236,8 +248,8 @@ class CommandSession {
     if (type == 'error' && id != null) {
       final completer = _pending.remove(id);
       if (completer == null) return;
-      final errorText = (payload?['errorText'] as String?) ?? '';
-      completer.complete(CmdReplyErr(errorText.isEmpty ? 'Unknown error' : errorText));
+      final errorText = ssapErrorText(msg);
+      completer.complete(CmdReplyErr(errorText.isEmpty ? 'Unknown error' : errorText, raw: msg));
       return;
     }
   }
@@ -321,10 +333,18 @@ class CommandSession {
 
   /// Returns the subscription id, or null if not READY or the send failed
   /// (in which case the listener is not registered).
-  String? subscribe(String uri, void Function(Map<String, dynamic>?) listener) {
+  ///
+  /// [onFrame] also sees the whole frame, error frames included, which the
+  /// plain listener (payload, or null on error) cannot tell apart.
+  String? subscribe(
+    String uri,
+    void Function(Map<String, dynamic>?) listener, {
+    void Function(Map<String, dynamic> frame)? onFrame,
+  }) {
     if (_state != CmdState.ready || _ws == null) return null;
     final id = _idSeq.nextSubscriptionId();
     _subscriptions[id] = listener;
+    if (onFrame != null) _subscriptionFrameTaps[id] = onFrame;
     try {
       _ws!.add(encodeSsapMessage({
         'id': id,
@@ -334,6 +354,7 @@ class CommandSession {
       }));
     } catch (_) {
       _subscriptions.remove(id);
+      _subscriptionFrameTaps.remove(id);
       return null;
     }
     return id;
@@ -341,6 +362,7 @@ class CommandSession {
 
   void unsubscribe(String id) {
     _subscriptions.remove(id);
+    _subscriptionFrameTaps.remove(id);
     try {
       _ws?.add(encodeSsapMessage({'id': id, 'type': 'unsubscribe'}));
     } catch (_) {

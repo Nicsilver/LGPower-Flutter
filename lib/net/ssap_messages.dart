@@ -81,3 +81,22 @@ Map<String, dynamic> decodeSsapMessage(String raw) =>
     jsonDecode(raw) as Map<String, dynamic>;
 
 String encodeSsapMessage(Map<String, dynamic> message) => jsonEncode(message);
+
+/// Error text of a response or error frame. Most failures carry it in
+/// `payload.errorText`, but a permission denial arrives as a top-level
+/// `error` with an empty payload, e.g. `"401 insufficient permissions"`.
+String ssapErrorText(Map<String, dynamic> msg) {
+  final payload = msg['payload'];
+  final fromPayload = payload is Map ? payload['errorText'] : null;
+  if (fromPayload is String && fromPayload.isNotEmpty) return fromPayload;
+  final top = msg['error'];
+  if (top is String && top.isNotEmpty) return top;
+  return '';
+}
+
+/// The TV refused the call because this client was not granted the
+/// permission it needs.
+bool isSsapPermissionError(String text) {
+  final lower = text.toLowerCase();
+  return lower.startsWith('401') || lower.contains('insufficient permission');
+}
