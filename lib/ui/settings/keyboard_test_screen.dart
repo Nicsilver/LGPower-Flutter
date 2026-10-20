@@ -122,7 +122,7 @@ class _KeyboardTestScreenState extends State<KeyboardTestScreen> {
                     children: [
                       Text(
                         'Open the TV search so the on-screen keyboard shows, then tap Start. '
-                        'The test takes about 25 seconds and types the letters A, B and C '
+                        'The test takes about 20 seconds and types the letters A, B and C '
                         'into the TV.',
                         style: TextStyle(fontSize: 14, height: 1.4, color: theme.primaryText),
                       ),

@@ -140,7 +140,7 @@ void main() {
 
     test('keyboard focus is read from currentWidget', () {
       expect(parseKeyboardFocus(null), KeyboardFocus.unknown);
-      expect(parseKeyboardFocus({'subscribed': true}), KeyboardFocus.unknown);
+      expect(parseKeyboardFocus({'subscribed': true}), KeyboardFocus.none);
       expect(
         parseKeyboardFocus({
           'currentWidget': {'focus': true, 'contentType': 'text'},
