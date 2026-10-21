@@ -38,11 +38,10 @@ class ReleaseNotes {
   static const List<Release> all = [
     Release(54, '1.41.0', '2026-10-20', [
       'Buttons and the touchpad respond faster, especially the first press after unlocking the phone',
-      'Fixed presses that sometimes did nothing after coming back to the app',
+      'Fixed presses that sometimes did nothing after coming back to the app, also when the TV is slow to answer',
       'Click, Back and Exit in the locked touchpad now send exactly one action, and the cursor moves more smoothly',
       'Settings and the tip button can be opened from the setup screen, before a TV is paired',
       "Keyboard: a clearer message when the TV doesn't allow typing, and a hint to select a text field on the TV first",
-      'The first button press after opening the app no longer gets lost when the TV is slow to answer',
       'New: Settings > About > Contact opens an email to the developer',
     ]),
     Release(53, '1.40.7', '2026-10-16', [
