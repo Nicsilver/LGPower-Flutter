@@ -58,6 +58,7 @@ class PointerSession {
     this.connectGrace = const Duration(seconds: 10),
     Duration handshakeTimeout = defaultHandshakeTimeout,
     this.staleAfter = const Duration(milliseconds: 1500),
+    this.firstOpenWindow = defaultFirstOpenWindow,
   })  : createdAt = DateTime.now(),
         _connector = connector ?? connectTrustAll,
         _handshakeTimeout = handshakeTimeout {
@@ -78,6 +79,7 @@ class PointerSession {
       : createdAt = DateTime.now(),
         connectGrace = const Duration(seconds: 10),
         staleAfter = const Duration(milliseconds: 1500),
+        firstOpenWindow = defaultFirstOpenWindow,
         _handshakeTimeout = defaultHandshakeTimeout,
         _connector = connectTrustAll {
     _keyUsed = _prefs.clientKey;
@@ -99,6 +101,14 @@ class PointerSession {
   /// key press waits for it, so a press that has reported a timeout never
   /// has its key sent by a session that opens afterwards.
   static const Duration defaultHandshakeTimeout = Duration(seconds: 6);
+
+  /// How long the first attempt to open the control socket may take before it
+  /// is abandoned for a fresh one. It normally opens in 70-220 ms; a C4 that
+  /// leaves a connection without any TLS or upgrade reply would otherwise cost
+  /// the full 3 s connect timeout and fail the press with most of its
+  /// deadline unused.
+  static const Duration defaultFirstOpenWindow = Duration(seconds: 1);
+  final Duration firstOpenWindow;
 
   /// Queued cursor movement, clicks and held-key repeats older than this are
   /// dropped on flush: replayed late they would land at the wrong spot or
@@ -176,8 +186,7 @@ class PointerSession {
 
   Future<void> _connect() async {
     try {
-      final ws = await connectWithTimeout(
-          _connector, 'wss://$ip:3001', const Duration(seconds: 3));
+      final ws = await _openControlSocket();
       if (_state == PointerState.dead) {
         closeQuietly(ws);
         return;
@@ -218,6 +227,33 @@ class PointerSession {
     } catch (_) {
       _fail();
     }
+  }
+
+  /// Nothing has been registered on a socket that never opened, so replacing
+  /// it cannot show a second pairing prompt or send a key twice. The abandoned
+  /// attempt is closed by [connectWithTimeout] if it opens late and is never
+  /// listened to, so it cannot flush the queue or become the session.
+  Future<WebSocket> _openControlSocket() async {
+    final url = 'wss://$ip:3001';
+    final started = DateTime.now();
+    try {
+      return await connectWithTimeout(_connector, url, firstOpenWindow);
+    } on TimeoutException {
+      // No reply at all: go straight to the second attempt.
+    } on SocketException {
+      await _waitOutFirstWindow(started);
+    } on HandshakeException {
+      await _waitOutFirstWindow(started);
+    }
+    if (_state != PointerState.connecting) throw StateError('closed');
+    return connectWithTimeout(_connector, url, const Duration(seconds: 3));
+  }
+
+  // A refused or reset connect is retried too, but not in a tight loop against
+  // a TV that is off.
+  Future<void> _waitOutFirstWindow(DateTime started) async {
+    final left = firstOpenWindow - DateTime.now().difference(started);
+    if (left > Duration.zero) await Future<void>.delayed(left);
   }
 
   Duration _graceLeft() => connectGrace - DateTime.now().difference(createdAt);

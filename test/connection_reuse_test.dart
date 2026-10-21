@@ -198,6 +198,8 @@ Future<void> _until(bool Function() cond) async {
   expect(cond(), isTrue, reason: 'condition not met within 3 s');
 }
 
+String _key(String name) => 'type:button\nname:$name\n\n';
+
 List<String> _buttons(_FakeTv tv) =>
     tv.pointerFrames.where((f) => f.startsWith('type:button')).toList();
 
@@ -1472,6 +1474,107 @@ void main() {
 
       expect(await client.pressKey('UP'), isA<CmdError>());
       expect(_buttons(tv), isEmpty);
+    });
+  });
+
+  group('control socket that never opens', () {
+    // Models a TV that leaves the first connection without a TLS or upgrade
+    // reply: [first] decides what the first control connect does, every later
+    // one goes to the fake TV at once.
+    SocketConnector hungFirst(Future<WebSocket> Function(SocketConnector real) first) {
+      final real = tv.connector();
+      var controlCalls = 0;
+      return (url) {
+        if (Uri.parse(url).path != '/pointer' && ++controlCalls == 1) return first(real);
+        return real(url);
+      };
+    }
+
+    test('a connect that never answers is replaced and the queued key goes out once', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: hungFirst((_) => Completer<WebSocket>().future),
+          firstOpenWindow: const Duration(milliseconds: 150));
+      addTearDown(session.close);
+
+      session.sendKey('UP');
+      final watch = Stopwatch()..start();
+      expect(await session.waitUntilReady(), isTrue);
+      expect(watch.elapsedMilliseconds, lessThan(1500));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(_buttons(tv), [_key('UP')]);
+      expect(tv.registerCount, 1);
+    });
+
+    test('the abandoned connect answering late is closed and sends nothing', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: hungFirst((real) async {
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            return real('wss://127.0.0.1:3001');
+          }),
+          firstOpenWindow: const Duration(milliseconds: 150));
+      addTearDown(session.close);
+
+      session.sendKey('UP');
+      expect(await session.waitUntilReady(), isTrue);
+      session.sendKey('DOWN');
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+      expect(tv.controlConnections, 2, reason: 'the late one did connect');
+      expect(tv.registerCount, 1, reason: 'but never registered');
+      expect(_buttons(tv), [_key('UP'), _key('DOWN')]);
+      expect(tv.openControlSockets, 0);
+    });
+
+    test('a refused first connect is retried once', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: hungFirst((_) => Future<WebSocket>.error(const SocketException('reset'))),
+          firstOpenWindow: const Duration(milliseconds: 150));
+      addTearDown(session.close);
+
+      session.sendKey('UP');
+      expect(await session.waitUntilReady(), isTrue);
+      await _until(() => _buttons(tv).length == 1);
+      expect(_buttons(tv), [_key('UP')]);
+    });
+
+    test('an upgrade the TV refuses is final, not retried', () async {
+      var calls = 0;
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: (_) {
+            calls++;
+            return Future<WebSocket>.error(const WebSocketException('not upgraded'));
+          },
+          firstOpenWindow: const Duration(milliseconds: 150));
+      addTearDown(session.close);
+
+      expect(await session.waitUntilReady(), isFalse);
+      expect(calls, 1);
+    });
+
+    test('two connects that never answer still end the session at its deadline', () async {
+      final session = PointerSession('127.0.0.1', await _prefs(),
+          connector: (_) => Completer<WebSocket>().future,
+          firstOpenWindow: const Duration(milliseconds: 100),
+          handshakeTimeout: const Duration(milliseconds: 600));
+      addTearDown(session.close);
+
+      session.sendKey('UP');
+      expect(await session.waitUntilReady(), isFalse);
+      expect(session.state, PointerState.dead);
+      expect(_buttons(tv), isEmpty);
+    });
+
+    test('a press through the client survives a hung first pointer connect', () async {
+      final client = WebOsClient(await _prefs(),
+          commandSessionFactory: tv.commands(),
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p,
+              connector: hungFirst((_) => Completer<WebSocket>().future),
+              firstOpenWindow: const Duration(milliseconds: 150)));
+      addTearDown(client.resetConnection);
+
+      expect(await client.pressKey('UP'), isA<Success>());
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(_buttons(tv), [_key('UP')]);
+      expect(tv.registerCount, 2, reason: 'one command session, one pointer');
     });
   });
 
