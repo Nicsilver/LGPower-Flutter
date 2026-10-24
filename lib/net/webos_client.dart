@@ -13,6 +13,7 @@ import '../core/prefs.dart';
 import '../core/tv_store.dart';
 import '../core/wake_action.dart';
 import 'command_session.dart';
+import 'conn_report.dart';
 import 'keyboard.dart';
 import 'pointer_session.dart';
 import 'wol.dart' as wol;
@@ -145,6 +146,8 @@ const Map<String, int> brandColors = {
   'org.xbmc.kodi': 0xFF1A3A6B,
 };
 
+const _probeClose = 'connection report';
+
 class WebOsClient {
   WebOsClient(
     this.prefs, {
@@ -223,7 +226,10 @@ class WebOsClient {
           pointer = dropped ? 'dropped' : 'kept';
         }
       }
-      _connLog(sessionDeathLine(session, pointer));
+      final line = sessionDeathLine(session, pointer);
+      // The report closes the session itself to time a fresh one; that is not a death worth listing.
+      if (session.deathCause != _probeClose) DeathLog.shared.add(line);
+      _connLog(line);
     }));
     return session;
   }
@@ -701,6 +707,94 @@ class WebOsClient {
     return () {
       if (id != null) session.unsubscribe(id);
     };
+  }
+
+  /// Timed probes for the connection report. Drops both shared sockets first so
+  /// the open times are those of a fresh connection; the next use of the remote
+  /// reopens them on demand.
+  Future<TvProbe> probeConnection({void Function(String stage)? onStage}) async {
+    if (tvIp.isEmpty) return const TvProbe(failure: 'No TV is set up');
+    // Registering without a key would raise a pairing prompt on the TV.
+    if ((prefs.clientKey ?? '').isEmpty) return const TvProbe(failure: 'The TV is not paired yet');
+    const count = 10;
+    double ms(Stopwatch w) => w.elapsedMicroseconds / 1000.0;
+
+    onStage?.call('Opening the command connection');
+    final oldPointer = _sharedPointerSession;
+    final oldCommand = _sharedCommandSession;
+    _sharedPointerSession = null;
+    _sharedCommandSession = null;
+    oldPointer?.close();
+    oldCommand?.close(why: _probeClose);
+
+    final opened = Stopwatch()..start();
+    final session = _commandSession();
+    await session.awaitReady(timeout: const Duration(seconds: 10));
+    if (session.state != CmdState.ready) {
+      return TvProbe(
+        failure: session.state == CmdState.needsPairing
+            ? 'The TV is waiting for pairing'
+            : "Can't connect to TV",
+      );
+    }
+    final commandOpenMs = ms(opened);
+
+    onStage?.call('Reading TV info');
+    final model = ConnReport.tvModel(
+        await session.send('ssap://system/getSystemInfo', timeoutSecs: 4));
+    final software = ConnReport.tvSoftware(await session.send(
+        'ssap://com.webos.service.update/getCurrentSWInformation',
+        timeoutSecs: 4));
+
+    onStage?.call('Timing requests');
+    final trips = <double>[];
+    var failed = 0;
+    for (var i = 0; i < count; i++) {
+      final w = Stopwatch()..start();
+      final reply = await session.send('ssap://system/getSystemInfo', timeoutSecs: 4);
+      if (reply is CmdReplyOk) {
+        trips.add(ms(w));
+      } else {
+        failed++;
+      }
+    }
+
+    onStage?.call('Opening the pointer socket');
+    // The remote screen underneath re-warms a pointer as soon as the command session is up.
+    final warmed = _sharedPointerSession;
+    _sharedPointerSession = null;
+    warmed?.close();
+    final pointerWatch = Stopwatch()..start();
+    final pointer = pointerSession();
+    if (!await pointer.waitUntilReady()) {
+      return TvProbe(
+        model: model,
+        software: software,
+        commandOpenMs: commandOpenMs,
+        roundTripsMs: trips,
+        roundTripFailures: failed,
+        pointerFailure: 'Pointer socket did not open',
+      );
+    }
+    final pointerOpenMs = ms(pointerWatch);
+
+    onStage?.call('Timing pointer frames');
+    final sends = <double>[];
+    for (var i = 0; i < count; i++) {
+      final w = Stopwatch()..start();
+      if (pointer.sendProbeFrame()) sends.add(ms(w));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    }
+    return TvProbe(
+      model: model,
+      software: software,
+      commandOpenMs: commandOpenMs,
+      roundTripsMs: trips,
+      roundTripFailures: failed,
+      pointerOpenMs: pointerOpenMs,
+      pointerFailure: sends.length < count ? '${count - sends.length} pointer frames were refused' : null,
+      frameSendMs: sends,
+    );
   }
 
   /// The shared command session, for the keyboard test, which has to see raw

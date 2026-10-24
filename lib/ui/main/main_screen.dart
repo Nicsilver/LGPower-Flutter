@@ -10,6 +10,7 @@ import '../../core/prefs.dart';
 import '../../core/right_pill.dart';
 import '../../core/tv_store.dart';
 import '../../core/volume_buttons.dart';
+import '../../core/wifi_radio.dart';
 import '../../net/ir.dart';
 import '../../net/webos_client.dart';
 import '../../theme/theme_config.dart';
@@ -97,6 +98,7 @@ class _MainScreenState extends State<MainScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WifiRadio.holdLowLatency();
     unawaited(_bootstrap());
   }
 
@@ -158,6 +160,11 @@ class _MainScreenState extends State<MainScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      WifiRadio.holdLowLatency();
+    } else if (state == AppLifecycleState.paused) {
+      WifiRadio.releaseLowLatency();
+    }
     if (!_ready) return;
     if (state == AppLifecycleState.resumed) {
       // inactive -> resumed (iOS Control Center, a system dialog) never went
@@ -191,6 +198,7 @@ class _MainScreenState extends State<MainScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    WifiRadio.releaseLowLatency();
     if (_hardwareKeysHooked) VolumeButtons.stop();
     _toastSub?.cancel();
     _wakeHintSub?.cancel();

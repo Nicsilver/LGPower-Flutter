@@ -21,6 +21,7 @@ import '../widgets/app_switch.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/ios_back_button.dart';
 import '../widgets/picker_sheet.dart';
+import '../widgets/conn_report_sheet.dart';
 import '../widgets/release_notes_dialog.dart';
 import '../widgets/section.dart';
 import '../widgets/spotlight_tour.dart';
@@ -777,6 +778,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           label: 'Contact',
           subtitle: 'Send feedback or report a problem',
           onTap: _contact,
+          correctedChevron: false,
+        ),
+        const RowDivider(),
+        _navRow(
+          theme,
+          label: 'Copy connection report',
+          subtitle:
+              'Phone, TV and Wi-Fi details plus a quick speed test, to paste into a bug report. Nothing is sent.',
+          onTap: () => unawaited(showConnReportSheet(context, widget.client)),
           correctedChevron: false,
         ),
       ],

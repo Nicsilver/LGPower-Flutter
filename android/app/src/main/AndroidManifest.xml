@@ -4,6 +4,8 @@
     <!-- Flutter's template only declares this in the debug/profile manifests,
          so without it here every release build has no network at all -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- The sideloaded build never bills; the in_app_purchase plugin merges this in anyway -->
     <uses-permission android:name="com.android.vending.BILLING" tools:node="remove"/>
     <uses-feature android:name="android.hardware.consumerir" android:required="false"/>

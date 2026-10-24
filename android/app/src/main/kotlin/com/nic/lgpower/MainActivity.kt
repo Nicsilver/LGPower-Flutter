@@ -8,10 +8,12 @@ import io.flutter.plugin.common.MethodChannel
 
 private const val IR_CHANNEL = "com.nic.lgpower/ir"
 private const val VOLUME_CHANNEL = "com.nic.lgpower/volume_buttons"
+private const val WIFI_CHANNEL = "com.nic.lgpower/wifi"
 
 class MainActivity : FlutterActivity() {
     private var volumeChannel: MethodChannel? = null
     private var volumeListening = false
+    private val wifiRadio by lazy { WifiRadio(this) }
 
     // Flutter's HardwareKeyboard only sees the volume keys once something has
     // keyboard focus (flutter/flutter#95121), so they are caught here instead.
@@ -24,6 +26,17 @@ class MainActivity : FlutterActivity() {
         if (direction == null || !volumeListening) return super.dispatchKeyEvent(event)
         if (event.action == KeyEvent.ACTION_DOWN) volumeChannel?.invokeMethod("press", direction)
         return true
+    }
+
+    // The lock only works with the app in front, so it never outlives the activity being visible.
+    override fun onStop() {
+        wifiRadio.release()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        wifiRadio.release()
+        super.onDestroy()
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
@@ -42,6 +55,16 @@ class MainActivity : FlutterActivity() {
                     "stop" -> { volumeListening = false; result.success(null) }
                     else -> result.notImplemented()
                 }
+            }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WIFI_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "acquire" -> result.success(wifiRadio.acquire())
+                "release" -> { wifiRadio.release(); result.success(false) }
+                "isHeld" -> result.success(wifiRadio.isHeld)
+                "wifiInfo" -> result.success(wifiRadio.info())
+                else -> result.notImplemented()
             }
         }
 
