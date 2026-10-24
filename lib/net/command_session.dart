@@ -150,7 +150,7 @@ class CommandSession {
     }
   }
 
-  static String _describe(Object e) => '${e.runtimeType}: $e';
+  static String _describe(Object e) => '${e.runtimeType}: ${scrubAddresses(e.toString())}';
 
   void _onDone() {
     if (_state == CmdState.dead) return;
@@ -160,7 +160,7 @@ class CommandSession {
     final reason = _ws?.closeReason;
     deadReason = (reason == null || reason.isEmpty) ? null : reason;
     _die(const CmdReplyErr('Connection closed'),
-        'peer closed code=${_ws?.closeCode} reason=${deadReason ?? 'none'}');
+        'peer closed code=${_ws?.closeCode} reason=${scrubAddresses(deadReason)}');
   }
 
   void _onError(Object error) {
@@ -256,7 +256,7 @@ class CommandSession {
       deadReason = errorText.isEmpty ? 'Pairing was not accepted' : errorText;
       pairingRejected = true;
       final ws = _ws;
-      _die(CmdReplyErr(deadReason!), 'registration error: $deadReason');
+      _die(CmdReplyErr(deadReason!), 'registration error: ${scrubAddresses(deadReason)}');
       closeQuietly(ws);
       return;
     }
@@ -419,3 +419,11 @@ String sessionDeathLine(CommandSession s, String pointer) {
   return 'cmd session died: cause=${s.deathCause} '
       'age=${died.difference(s.createdAt).inMilliseconds}ms sinceRx=$sinceRx pointer=$pointer';
 }
+
+final _ipv4 = RegExp(r'\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?');
+final _ipv6 = RegExp(r'(?:[0-9a-fA-F]{0,4}:){2,}[0-9a-fA-F]{0,4}');
+
+/// Exception texts name the host they failed to reach, and the TV's address
+/// must not reach logs.
+String scrubAddresses(String? text) =>
+    (text ?? 'none').replaceAll(_ipv4, '<ip>').replaceAll(_ipv6, '<ip>');

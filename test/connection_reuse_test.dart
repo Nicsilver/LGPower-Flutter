@@ -1468,7 +1468,7 @@ void main() {
       );
     });
 
-    test('closing our own session logs it once as replaced', () async {
+    test('resetting the connection logs the death once as reset', () async {
       final lines = <String>[];
       final client = WebOsClient(await _prefs(),
           connLog: lines.add,
@@ -1483,6 +1483,17 @@ void main() {
       expect(lines, hasLength(1));
       expect(lines.single, contains('cause=reset'));
       expect(lines.single, endsWith('pointer=unshared'));
+    });
+  });
+
+  group('death log scrubbing', () {
+    test('addresses and ports never survive', () {
+      final out = scrubAddresses(
+          'SocketException: Connection refused, address = 192.168.1.157, port = 51234 '
+          'via fe80::1ff:fe23:4567:890a 192.168.1.157:3001');
+      expect(out, isNot(matches(RegExp(r'\d+\.\d+\.\d+\.\d+'))));
+      expect(out, isNot(contains('fe80')));
+      expect(out, contains('SocketException'));
     });
   });
 
