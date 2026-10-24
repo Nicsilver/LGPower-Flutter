@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 import '../../../core/haptics.dart';
 import '../../../net/pointer_session.dart';
@@ -39,15 +39,25 @@ class TouchpadController extends ChangeNotifier {
   // Phase 2 (locked-mode) multi-touch tracking.
   final Map<int, Offset> _pointers = {};
 
-  // Cursor travel is summed here and sent once per frame. A touch panel
-  // reports several times per frame (hundreds of events a second on a fast
-  // one), but Android hands the Kotlin app one batched event per frame, so
-  // one frame per vsync is the rate the TV is used to.
+  // Cursor travel is summed here and sent at most once per display refresh.
+  // Flutter asks Android for unbuffered input, so a touch panel reports
+  // several times per refresh (hundreds of events a second on a fast one),
+  // while the Kotlin app gets one batched event per vsync: that is the rate
+  // the TV is used to. Sends are paced by the touch events' own timestamps,
+  // not by frame callbacks: a slow or skipped frame (the reveal blur, a debug
+  // build) must not hold the cursor back, and the first move goes out on the
+  // first touch event. Pacing on a timer instead fires a few ms late each
+  // time (~50 sends a second), so the timer only flushes what a stopped
+  // finger leaves behind.
+  // All travel is in physical pixels, as Android's rawX/rawY are; logical
+  // pixels made the cursor move 1/devicePixelRatio as far as the Kotlin app.
   double _pendingDx = 0;
   double _pendingDy = 0;
   double _dxCarry = 0;
   double _dyCarry = 0;
-  bool _flushScheduled = false;
+  Duration? _lastSendAt;
+  Timer? _tailFlush;
+  bool _buttonDragging = false;
   bool _disposed = false;
   double _dragTotalDist = 0;
   bool _overlayDragging = false;
@@ -55,10 +65,26 @@ class TouchpadController extends ChangeNotifier {
   double _lastScrollY = 0;
   double _scrollCarry = 0;
 
+  // Physical pixels per send, compared like the Kotlin app's per-vsync
+  // delta: a per-touch-event check almost never fires on a fast panel, so the
+  // pad locked under a finger that was dragging and froze the cursor.
   static const double _moveThresholdPx = 12;
   static const double _hapticMovePx = 32;
+  // Logical pixels, matching Kotlin's `12 * density`.
   static const double _tapThresholdPx = 12;
   static const double _scrollSensitivity = 18;
+
+  static ui.FlutterView? get _view =>
+      WidgetsBinding.instance.platformDispatcher.implicitView;
+
+  static double get _dpr => _view?.devicePixelRatio ?? 1;
+
+  // A little under one refresh, so touch samples that land just short of a
+  // refresh boundary (8 ms apart against 16.7) do not stretch it to two.
+  static Duration get _sendInterval {
+    final hz = _view?.display.refreshRate ?? 60;
+    return Duration(microseconds: (0.9e6 / (hz >= 30 ? hz : 60)).round());
+  }
 
   Offset _toLocal(Offset global) {
     final box = rootKey.currentContext?.findRenderObject();
@@ -71,8 +97,10 @@ class TouchpadController extends ChangeNotifier {
     active = true;
     isLocked = false;
     _hasMoved = false;
+    _buttonDragging = true;
     _moveAccumulator = 0;
     _resetMoves();
+    _stopPacing();
     center = _toLocal(globalCenter);
     _lastGlobal = globalPointer;
     reveal.value = 0;
@@ -95,23 +123,29 @@ class TouchpadController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void onButtonMove(Offset globalPointer) {
-    if (!active || isLocked) return;
-    final dx = globalPointer.dx - _lastGlobal.dx;
-    final dy = globalPointer.dy - _lastGlobal.dy;
-    if (!_hasMoved && (dx.abs() > _moveThresholdPx || dy.abs() > _moveThresholdPx)) {
-      _hasMoved = true;
-      _lockTimer?.cancel();
-      reveal.stop();
-      unawaited(reveal.animateTo(1, duration: const Duration(milliseconds: 100)));
-    }
+  // Keeps driving the cursor after the pad locks under a finger that held
+  // still and then moved, as the Kotlin app's button listener does.
+  void onButtonMove(Offset globalPointer, Duration timeStamp) {
+    if (!active || !_buttonDragging) return;
+    final dpr = _dpr;
+    final dx = (globalPointer.dx - _lastGlobal.dx) * dpr;
+    final dy = (globalPointer.dy - _lastGlobal.dy) * dpr;
     _lastGlobal = globalPointer;
     _moveAccumulator += math.sqrt(dx * dx + dy * dy);
     if (_moveAccumulator >= _hapticMovePx) {
       Haptics.selection();
       _moveAccumulator = 0;
     }
-    _queueMove(dx, dy);
+    _queueMove(dx, dy, timeStamp);
+  }
+
+  void _checkDragStarted(double windowDx, double windowDy) {
+    if (_hasMoved || isLocked || !_buttonDragging) return;
+    if (windowDx.abs() <= _moveThresholdPx && windowDy.abs() <= _moveThresholdPx) return;
+    _hasMoved = true;
+    _lockTimer?.cancel();
+    reveal.stop();
+    unawaited(reveal.animateTo(1, duration: const Duration(milliseconds: 100)));
   }
 
   void _resetMoves() {
@@ -121,20 +155,33 @@ class TouchpadController extends ChangeNotifier {
     _dyCarry = 0;
   }
 
-  void _queueMove(double dx, double dy) {
+  void _queueMove(double dx, double dy, Duration at) {
     _pendingDx += dx;
     _pendingDy += dy;
-    if (_flushScheduled) return;
-    _flushScheduled = true;
-    SchedulerBinding.instance.scheduleFrameCallback((_) {
-      _flushScheduled = false;
-      if (!_disposed) flushMoves();
-    });
+    final last = _lastSendAt;
+    if (last == null || at < last || at - last >= _sendInterval) {
+      _stopPacing();
+      _lastSendAt = at;
+      flushMoves();
+    } else {
+      _tailFlush ??= Timer(_sendInterval, () {
+        _tailFlush = null;
+        _lastSendAt = null;
+        if (!_disposed) flushMoves();
+      });
+    }
   }
 
-  /// Sends the travel gathered since the last frame. The fraction that does
+  void _stopPacing() {
+    _tailFlush?.cancel();
+    _tailFlush = null;
+    _lastSendAt = null;
+  }
+
+  /// Sends the travel gathered since the last send. The fraction that does
   /// not fit a whole unit stays in the carry so slow drags lose nothing.
   void flushMoves() {
+    _checkDragStarted(_pendingDx, _pendingDy);
     final totalDx = _pendingDx + _dxCarry;
     final totalDy = _pendingDy + _dyCarry;
     _pendingDx = 0;
@@ -150,15 +197,20 @@ class TouchpadController extends ChangeNotifier {
 
   void onButtonUp() {
     _lockTimer?.cancel();
+    flushMoves();
+    _stopPacing();
+    _buttonDragging = false;
     if (!isLocked) _exit();
   }
 
   void _exit() {
     flushMoves();
+    _stopPacing();
     _lockTimer?.cancel();
     active = false;
     isLocked = false;
     _hasMoved = false;
+    _buttonDragging = false;
     reveal.stop();
     reveal.value = 0;
     _pointers.clear();
@@ -178,23 +230,24 @@ class TouchpadController extends ChangeNotifier {
       _overlayDragging = false;
       _scrolling = false;
       _resetMoves();
+      _stopPacing();
     } else if (_pointers.length == 2) {
       flushMoves();
       _scrolling = true;
       _overlayDragging = false;
       final ys = _pointers.values.map((o) => o.dy).toList();
-      _lastScrollY = (ys[0] + ys[1]) / 2;
+      _lastScrollY = (ys[0] + ys[1]) / 2 * _dpr;
       _scrollCarry = 0;
     }
   }
 
-  void overlayPointerMove(int id, Offset global) {
+  void overlayPointerMove(int id, Offset global, Duration timeStamp) {
     if (!isLocked) return;
     final prev = _pointers[id];
     _pointers[id] = global;
     if (_scrolling && _pointers.length >= 2) {
       final ys = _pointers.values.toList();
-      final midY = (ys[0].dy + ys[1].dy) / 2;
+      final midY = (ys[0].dy + ys[1].dy) / 2 * _dpr;
       final total = (midY - _lastScrollY) + _scrollCarry;
       final units = (total / _scrollSensitivity).truncate();
       _scrollCarry = total - units * _scrollSensitivity;
@@ -213,7 +266,7 @@ class TouchpadController extends ChangeNotifier {
         _resetMoves();
       }
     }
-    if (_overlayDragging) _queueMove(dx, dy);
+    if (_overlayDragging) _queueMove(dx * _dpr, dy * _dpr, timeStamp);
   }
 
   void overlayPointerUp(int id) {
@@ -222,6 +275,7 @@ class TouchpadController extends ChangeNotifier {
     flushMoves();
     _pointers.remove(id);
     if (_pointers.isEmpty) {
+      _stopPacing();
       if (wasSingle && !_overlayDragging && !_scrolling) {
         Haptics.light();
         _pointer?.click();
@@ -252,6 +306,7 @@ class TouchpadController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _lockTimer?.cancel();
+    _tailFlush?.cancel();
     reveal.dispose();
     super.dispose();
   }
@@ -274,7 +329,7 @@ class TouchpadButton extends StatelessWidget {
         final center = box.localToGlobal(box.size.center(Offset.zero));
         controller.onButtonDown(center, event.position);
       },
-      onPointerMove: (event) => controller.onButtonMove(event.position),
+      onPointerMove: (event) => controller.onButtonMove(event.position, event.timeStamp),
       onPointerUp: (_) => controller.onButtonUp(),
       onPointerCancel: (_) => controller.onButtonUp(),
       child: Container(
@@ -319,7 +374,7 @@ class TouchpadOverlayLayer extends StatelessWidget {
                 child: Listener(
                   behavior: HitTestBehavior.opaque,
                   onPointerDown: (e) => controller.overlayPointerDown(e.pointer, e.position),
-                  onPointerMove: (e) => controller.overlayPointerMove(e.pointer, e.position),
+                  onPointerMove: (e) => controller.overlayPointerMove(e.pointer, e.position, e.timeStamp),
                   onPointerUp: (e) => controller.overlayPointerUp(e.pointer),
                   onPointerCancel: (e) => controller.overlayPointerUp(e.pointer),
                   child: AnimatedBuilder(
