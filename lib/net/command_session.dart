@@ -434,10 +434,18 @@ String sessionDeathLine(CommandSession s, String pointer) {
       'age=${died.difference(s.createdAt).inMilliseconds}ms sinceRx=$sinceRx pointer=$pointer';
 }
 
-final _ipv4 = RegExp(r'\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?');
-final _ipv6 = RegExp(r'(?:[0-9a-fA-F]{0,4}:){2,}[0-9a-fA-F]{0,4}');
+const _octet = r'(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)';
+final _v4 = _octet + r'(?:\.' + _octet + r'){3}';
+const _hex = r'[0-9A-Fa-f]{1,4}';
+
+// Lookarounds keep clock times, firmware versions and "Class::method" from matching.
+final _ipv6 = RegExp(
+    r'(?<![\w:.])(?:(?:H:){7}H|(?:H:){6}V4|(?:H(?::H)*)?::(?:(?:H:)*V4|H(?::H)*)?)(?:%[\w.~-]+)?(?![\w:])'
+        .replaceAll('V4', _v4)
+        .replaceAll('H', _hex));
+final _ipv4 = RegExp(r'(?<![\w.])' + _v4 + r'(?::\d{1,5})?(?![\w]|\.\d)');
 
 /// Exception texts name the host they failed to reach, and the TV's address
 /// must not reach logs.
 String scrubAddresses(String? text) =>
-    (text ?? 'none').replaceAll(_ipv4, '<ip>').replaceAll(_ipv6, '<ip>');
+    (text ?? 'none').replaceAll(_ipv6, '<ip>').replaceAll(_ipv4, '<ip>');

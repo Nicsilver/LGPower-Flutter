@@ -1495,6 +1495,23 @@ void main() {
       expect(out, isNot(contains('fe80')));
       expect(out, contains('SocketException'));
     });
+
+    test('every address shape is scrubbed', () {
+      for (final shape in [
+        '192.168.1.157:3001', '/192.168.1.50', '2001:db8:85a3:0:0:8a2e:370:7334',
+        'fe80::1:2:3', '[fe80::1%wlan0]:3001', '::1', '::ffff:192.168.1.5', 'fd00::abcd:1/64',
+      ]) {
+        final out = scrubAddresses('x $shape y');
+        expect(out, contains('<ip>'), reason: shape);
+        expect(out, isNot(matches(RegExp(r'\d{2,}\.\d|fe80|fd00|2001|::'))), reason: out);
+      }
+    });
+
+    test('clock times, versions and scoped names are left alone', () {
+      for (final s in ['12:34:56.789', '04.40.43', '4.9.0.12.5', '33.21.65', 'WebOsClient::close']) {
+        expect(scrubAddresses(s), s);
+      }
+    });
   });
 
   group('socket helpers', () {
