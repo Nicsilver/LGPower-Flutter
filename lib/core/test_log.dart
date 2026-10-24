@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../net/command_session.dart' show scrubAddresses;
 import '../ui/main/widgets/touchpad_overlay.dart' show TouchpadOverlayLayer;
 
 /// One LgpTest line: `app`, `t`, `ev`, then the fields in order, nulls left out.
@@ -43,7 +44,9 @@ abstract final class TestLog {
     _channel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'widgets':
-          return _widgetsJson();
+          final json = _widgetsJson();
+          if (_enabled) _native?.write(json);
+          return json;
         case 'enabled':
           _enabled = call.arguments as bool? ?? true;
           return null;
@@ -61,14 +64,35 @@ abstract final class TestLog {
     return '$prefix${_sids.update(prefix, (n) => n + 1, ifAbsent: () => 1)}';
   }
 
+  /// Lets tests observe lines without the native log.
+  @visibleForTesting
+  static void Function(String line)? debugSink;
+
+  @visibleForTesting
+  static void debugSetEnabled(bool on) => _enabled = on;
+
+  @visibleForTesting
+  static void debugOnPointer(PointerEvent e) => _onPointer(e);
+
+  @visibleForTesting
+  static void debugReset() {
+    _active.clear();
+    _enabled = true;
+    debugSink = null;
+  }
+
   static void _emit(String ev, Map<String, Object?> fields) {
+    final sink = debugSink;
+    if (sink != null) {
+      sink(formatTestLine(_app, 0, ev, fields));
+      return;
+    }
     final native = _native;
     if (native == null) return;
     native.write(formatTestLine(_app, native.uptimeMs(), ev, fields));
   }
 
   static void _onPointer(PointerEvent e) {
-    if (!_enabled) return;
     final String a;
     if (e is PointerDownEvent) {
       _active.add(e.pointer);
@@ -80,6 +104,9 @@ abstract final class TestLog {
     } else {
       return;
     }
+    // _active is tracked even while logging is off: a finger already down
+    // when logging resumes must not leave a stale id that blocks every later touch line.
+    if (!_enabled) return;
     final dpr = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio;
     _emit('touch', {
       'a': a,
@@ -127,7 +154,7 @@ abstract final class TestLog {
       'sid': sid,
       'st': st,
       'code': code,
-      'reason': _short(reason),
+      'reason': _short(reason == null ? null : scrubAddresses(reason)),
       'deliberate': deliberate,
     });
   }

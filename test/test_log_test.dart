@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lgpower/core/test_log.dart';
 
@@ -27,5 +28,25 @@ void main() {
     expect(TestLog.nextSid('ptr'), 'ptr1');
     TestLog.key('ptr1', 1, 'sent', 'UP');
     TestLog.sock('cmd', 'cmd1', 'close', code: 1000);
+  });
+
+  group('touch tracking', () {
+    tearDown(TestLog.debugReset);
+
+    test('a finger that lifts while logging is off does not block later touch lines', () {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final lines = <String>[];
+      TestLog.debugSink = lines.add;
+      TestLog.debugOnPointer(const PointerDownEvent(pointer: 1));
+      expect(lines.length, 1);
+      TestLog.debugSetEnabled(false);
+      TestLog.debugOnPointer(const PointerUpEvent(pointer: 1));
+      TestLog.debugSetEnabled(true);
+      lines.clear();
+      TestLog.debugOnPointer(const PointerDownEvent(pointer: 2));
+      TestLog.debugOnPointer(const PointerUpEvent(pointer: 2));
+      expect(lines.length, 2);
+      expect((jsonDecode(lines.first) as Map)['a'], 'down');
+    });
   });
 }
