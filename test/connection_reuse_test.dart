@@ -1446,6 +1446,46 @@ void main() {
     });
   });
 
+  group('death log line', () {
+    test('a TV dropping the command socket logs one line with cause and pointer fate', () async {
+      final lines = <String>[];
+      final client = WebOsClient(await _prefs(),
+          connLog: lines.add,
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p, connector: tv.connector()),
+          commandSessionFactory: (ip, p) => CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      expect(await client.getVolume(), isNotNull);
+      tv.dropControlSockets();
+      await _until(() => lines.isNotEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(lines, hasLength(1));
+      expect(
+        lines.single,
+        matches(RegExp(
+            r'^cmd session died: cause=peer closed code=\S+ reason=\S+ age=\d+ms sinceRx=\d+ms pointer=(dropped|kept|none|unshared)$')),
+      );
+    });
+
+    test('closing our own session logs it once as replaced', () async {
+      final lines = <String>[];
+      final client = WebOsClient(await _prefs(),
+          connLog: lines.add,
+          commandSessionFactory: (ip, p) => CommandSession(ip, p, connector: tv.connector()));
+      addTearDown(client.resetConnection);
+
+      expect(await client.getVolume(), isNotNull);
+      client.resetConnection();
+      await _until(() => lines.isNotEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('cause=reset'));
+      expect(lines.single, endsWith('pointer=unshared'));
+    });
+  });
+
   group('socket helpers', () {
     test('a connect that finishes after its timeout is closed instead of left open', () async {
       final attempt = connectWithTimeout(

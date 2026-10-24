@@ -92,6 +92,14 @@ class CommandSession {
   WebSocket? _ws;
   String? deadReason;
 
+  /// Last frame received from the TV; null until the first one.
+  DateTime? lastRxAt;
+
+  /// Why the session died and when, for the one log line per death. The first
+  /// cause wins: close() also triggers the socket's own done callback.
+  String? deathCause;
+  DateTime? diedAt;
+
   /// The TV answered the registration with an error (prompt denied or timed
   /// out), as opposed to the socket just dropping.
   bool pairingRejected = false;
@@ -138,9 +146,11 @@ class CommandSession {
       ws.add(encodeSsapMessage(buildRegistration(_prefs.clientKey)));
     } catch (e) {
       deadReason = e.toString();
-      _die(CmdReplyErr(deadReason ?? 'Connection failed'));
+      _die(CmdReplyErr(deadReason ?? 'Connection failed'), 'connect threw ${_describe(e)}');
     }
   }
+
+  static String _describe(Object e) => '${e.runtimeType}: $e';
 
   void _onDone() {
     if (_state == CmdState.dead) return;
@@ -149,16 +159,18 @@ class CommandSession {
     // instead of a bare "Connection closed".
     final reason = _ws?.closeReason;
     deadReason = (reason == null || reason.isEmpty) ? null : reason;
-    _die(const CmdReplyErr('Connection closed'));
+    _die(const CmdReplyErr('Connection closed'),
+        'peer closed code=${_ws?.closeCode} reason=${deadReason ?? 'none'}');
   }
 
   void _onError(Object error) {
     if (_state == CmdState.dead) return;
     deadReason = error.toString();
-    _die(CmdReplyErr(deadReason ?? 'Connection failed'));
+    _die(CmdReplyErr(deadReason ?? 'Connection failed'), 'error ${_describe(error)}');
   }
 
   void _onMessage(dynamic raw) {
+    lastRxAt = DateTime.now();
     Map<String, dynamic> msg;
     try {
       msg = decodeSsapMessage(raw as String);
@@ -244,7 +256,7 @@ class CommandSession {
       deadReason = errorText.isEmpty ? 'Pairing was not accepted' : errorText;
       pairingRejected = true;
       final ws = _ws;
-      _die(CmdReplyErr(deadReason!));
+      _die(CmdReplyErr(deadReason!), 'registration error: $deadReason');
       closeQuietly(ws);
       return;
     }
@@ -270,9 +282,11 @@ class CommandSession {
     }
   }
 
-  void _die(CmdReply reply) {
+  void _die(CmdReply reply, String cause) {
     if (_state == CmdState.dead) return;
     _state = CmdState.dead;
+    deathCause = cause;
+    diedAt = DateTime.now();
     _ws = null;
     _settle();
     if (!_deathCompleter.isCompleted) _deathCompleter.complete();
@@ -388,11 +402,20 @@ class CommandSession {
     }
   }
 
-  void close() {
+  void close({String why = 'own close'}) {
     // _die clears _ws, so the socket has to be taken first or it stays open
     // (and keeps pinging the TV) after every reset.
     final ws = _ws;
-    _die(const CmdReplyErr('Session closed'));
+    _die(const CmdReplyErr('Session closed'), why);
     closeQuietly(ws);
   }
+}
+
+/// The one line logged per command session death. Carries no address or key.
+String sessionDeathLine(CommandSession s, String pointer) {
+  final died = s.diedAt ?? DateTime.now();
+  final rx = s.lastRxAt;
+  final sinceRx = rx == null ? 'never' : '${died.difference(rx).inMilliseconds}ms';
+  return 'cmd session died: cause=${s.deathCause} '
+      'age=${died.difference(s.createdAt).inMilliseconds}ms sinceRx=$sinceRx pointer=$pointer';
 }

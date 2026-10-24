@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/painting.dart' show Color;
 import 'package:palette_generator/palette_generator.dart';
 import 'package:path_provider/path_provider.dart';
@@ -152,7 +153,9 @@ class WebOsClient {
     this.pointerRetryBackoff = const Duration(seconds: 1),
     this.pairingBlockExpiry = const Duration(seconds: 30),
     this.watchReadyWait = const Duration(seconds: 5),
-  })  : _commandSessionFactory = commandSessionFactory ?? CommandSession.new,
+    void Function(String line)? connLog,
+  })  : _connLog = connLog ?? ((line) => debugPrint('LgpConn: $line')),
+        _commandSessionFactory = commandSessionFactory ?? CommandSession.new,
         _pointerSessionFactory = pointerSessionFactory ?? PointerSession.new {
     // Fire-and-forget: primes the synchronous cachedIconFile() lookup.
     // Until this resolves, cachedIconFile() returns null (see its doc).
@@ -160,6 +163,7 @@ class WebOsClient {
   }
 
   final Prefs prefs;
+  final void Function(String line) _connLog;
   final CommandSession Function(String ip, Prefs prefs) _commandSessionFactory;
   final PointerSession Function(String ip, Prefs prefs) _pointerSessionFactory;
 
@@ -195,7 +199,7 @@ class WebOsClient {
     // the old TV's live session must not answer for the new one.
     if (existing != null && existing.ip == tvIp && existing.isUsable) return existing;
     if (existing != null) {
-      existing.close();
+      existing.close(why: 'replaced');
       // The power watcher replaces a dying command session every few seconds
       // while the TV wakes; a pointer session still connecting must survive that.
       _dropPointer(where: (p) => p.ip != tvIp || (p.state != PointerState.dead && !p.isUsable));
@@ -209,9 +213,17 @@ class WebOsClient {
     // delivering, and replacing it mid-drag stalls the cursor until a new command
     // session registers, then lands everything moved meanwhile as one jump.
     unawaited(session.awaitDeath().then((_) {
+      var pointer = 'unshared';
       if (identical(_sharedCommandSession, session)) {
-        _dropPointer(where: (p) => p.state != PointerState.dead && !p.isConnecting && !p.inUse);
+        if (_sharedPointerSession == null) {
+          pointer = 'none';
+        } else {
+          final dropped = _dropPointer(
+              where: (p) => p.state != PointerState.dead && !p.isConnecting && !p.inUse);
+          pointer = dropped ? 'dropped' : 'kept';
+        }
       }
+      _connLog(sessionDeathLine(session, pointer));
     }));
     return session;
   }
@@ -316,16 +328,17 @@ class WebOsClient {
 
   // A dead session stays put when [where] is given: it carries the retry
   // pause and the pairing backoff.
-  void _dropPointer({bool Function(PointerSession)? where}) {
+  bool _dropPointer({bool Function(PointerSession)? where}) {
     final p = _sharedPointerSession;
-    if (p == null || (where != null && !where(p))) return;
+    if (p == null || (where != null && !where(p))) return false;
     p.close();
     _sharedPointerSession = null;
+    return true;
   }
 
   void resetConnection() {
     _dropPointer();
-    _sharedCommandSession?.close();
+    _sharedCommandSession?.close(why: 'reset');
     _sharedCommandSession = null;
   }
 
