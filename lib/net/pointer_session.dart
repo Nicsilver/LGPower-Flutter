@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
+
 import '../core/prefs.dart';
+import '../core/test_log.dart';
 import 'ssap_messages.dart';
 import 'ws_connect.dart';
 
@@ -25,6 +28,7 @@ class _Frame {
 
   final String kind;
   final String? raw;
+  String? keyName;
 
   /// Set on the auto-repeat presses of a held key; null for everything else.
   final Object? hold;
@@ -96,6 +100,8 @@ class PointerSession {
   final SocketConnector _connector;
   final DateTime createdAt;
   final Duration connectGrace;
+  final String sid = TestLog.nextSid('ptr');
+  int _frameSeq = 0;
   final Duration _handshakeTimeout;
 
   /// How long the pointer's own handshake may take once it is allowed to
@@ -201,6 +207,8 @@ class PointerSession {
       };
 
   Future<void> _connect() async {
+    TestLog.sock('ptr', sid, 'connect');
+    TestLog.sock('reg', sid, 'connect');
     try {
       final ws = await _openControlSocket();
       if (_state == PointerState.dead) {
@@ -208,6 +216,7 @@ class PointerSession {
         return;
       }
       _controlWs = ws;
+      TestLog.sock('reg', sid, 'open');
       ws.listen(
         _onControlMessage,
         onDone: _onControlDropped,
@@ -295,6 +304,7 @@ class PointerSession {
     }
 
     if (type == 'registered') {
+      TestLog.sock('reg', sid, 'registered');
       final key = payload?['client-key'] as String?;
       if (ip == _prefs.tvIp && key != null && key.isNotEmpty) {
         _prefs.setClientKey(key);
@@ -321,6 +331,7 @@ class PointerSession {
 
     // The TV is asking the user to accept a pairing prompt.
     if (type == 'response' && id == regMessageId) {
+      TestLog.sock('reg', sid, 'prompt');
       _needsPairing = true;
       _fail();
       return;
@@ -339,6 +350,7 @@ class PointerSession {
   }
 
   Future<void> _openPointerSocket(String url) async {
+    TestLog.sock('ptr', sid, 'connect');
     try {
       final ws = await connectWithTimeout(_connector, url, const Duration(seconds: 3));
       if (_state == PointerState.dead) {
@@ -356,6 +368,7 @@ class PointerSession {
       _state = PointerState.ready;
       _wasReady = true;
       _lastActiveAt = DateTime.now();
+      TestLog.sock('ptr', sid, 'open');
       _flushQueue();
       if (!_readyCompleter.isCompleted) _readyCompleter.complete();
     } catch (_) {
@@ -364,11 +377,13 @@ class PointerSession {
   }
 
   void _onPointerClosed() {
+    TestLog.sock('ptr', sid, 'close');
     _pointerWs = null;
     _fail();
   }
 
   void _onControlDropped() {
+    if (!_controlClosingIntentionally) TestLog.sock('reg', sid, 'close');
     _controlWs = null;
     // Our own close() on handshake progression (or on error) already deals
     // with readiness explicitly; only an unexpected drop counts as failure.
@@ -383,6 +398,7 @@ class PointerSession {
     if (_state == PointerState.connecting && !byCaller) {
       handshakeFailedAt = DateTime.now();
     }
+    TestLog.sock('ptr', sid, 'dead', deliberate: byCaller);
     _state = PointerState.dead;
     _handshakeTimer?.cancel();
     _queue.clear();
@@ -410,7 +426,7 @@ class PointerSession {
   // No `down:` field, no drag, no left/right button field -- this app never
   // sends them (spec §1.5).
   bool sendKey(String keyCode, {Object? hold}) =>
-      _submit(_Frame.raw('button', 'type:button\nname:$keyCode\n\n', hold: hold));
+      _submit(_Frame.raw('button', 'type:button\nname:$keyCode\n\n', hold: hold)..keyName = keyCode);
 
   /// Discards the queued repeats of a hold: once the finger is up they must
   /// not fire as a burst when the socket opens.
@@ -437,6 +453,7 @@ class PointerSession {
         ..dx += dx
         ..dy += dy
         ..queuedAt = DateTime.now();
+      if (kDebugMode) TestLog.move(kind, sid, ++_frameSeq, 'queued', dx, dy);
       return;
     }
     _submit(_Frame.delta(kind, dx, dy));
@@ -445,13 +462,30 @@ class PointerSession {
   bool _submit(_Frame frame) {
     switch (_state) {
       case PointerState.ready:
-        return _write(frame);
+        final ok = _write(frame);
+        _logFrame(frame, ok ? 'sent' : 'dropped');
+        return ok;
       case PointerState.connecting:
         if (_queue.length >= _maxQueued) _evictOldest();
         _queue.add(frame);
+        _logFrame(frame, 'queued');
         return true;
       case PointerState.dead:
+        _logFrame(frame, 'dropped');
         return false;
+    }
+  }
+
+  void _logFrame(_Frame f, String st) {
+    if (!kDebugMode) return;
+    final n = ++_frameSeq;
+    switch (f.kind) {
+      case 'button':
+        TestLog.key(sid, n, st, f.keyName ?? '', repeat: f.hold != null);
+      case 'click':
+        TestLog.click(sid, n, st);
+      default:
+        TestLog.move(f.kind, sid, n, st, f.dx, f.dy);
     }
   }
 
@@ -466,6 +500,7 @@ class PointerSession {
   void _flushQueue() {
     final frames = List.of(_queue);
     _queue.clear();
+    var written = 0;
     final cutoff = DateTime.now().subtract(staleAfter);
     // Only the newest repeat of each hold is still of any use.
     final latestRepeat = <Object, _Frame>{
@@ -476,20 +511,21 @@ class PointerSession {
     _motionDropped = false;
     for (final f in frames) {
       if (f.isOneShotKey) {
-        _write(f);
+        if (_write(f)) written++;
         continue;
       }
       final stale = f.queuedAt.isBefore(cutoff);
       if (f.hold != null) {
-        if (!stale && identical(latestRepeat[f.hold], f)) _write(f);
+        if (!stale && identical(latestRepeat[f.hold], f) && _write(f)) written++;
       } else if (f.kind == 'click') {
-        if (!stale && !motionDropped) _write(f);
+        if (!stale && !motionDropped && _write(f)) written++;
       } else if (stale) {
         motionDropped = true;
-      } else {
-        _write(f);
+      } else if (_write(f)) {
+        written++;
       }
     }
+    if (frames.isNotEmpty) TestLog.flush(sid, frames.length, written);
   }
 
   bool _write(_Frame frame) {

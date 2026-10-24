@@ -26,8 +26,14 @@ class MainActivity : FlutterActivity() {
         return true
     }
 
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        TestHooks.detach()
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        TestHooks.attach(flutterEngine)
 
         volumeChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VOLUME_CHANNEL).apply {
             setMethodCallHandler { call, result ->

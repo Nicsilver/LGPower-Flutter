@@ -9,6 +9,7 @@ import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'core/prefs.dart';
+import 'core/test_log.dart';
 import 'core/tip_service.dart';
 import 'core/tv_store.dart';
 import 'net/webos_client.dart';
@@ -18,6 +19,7 @@ import 'ui/setup/setup_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  TestLog.init();
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,

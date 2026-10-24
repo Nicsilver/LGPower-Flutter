@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import '../core/prefs.dart';
+import '../core/test_log.dart';
 import 'ssap_messages.dart';
 import 'ws_connect.dart';
 import 'wol.dart' show macList;
@@ -67,7 +68,8 @@ class CommandSession {
     SocketConnector? connector,
     this.connectGrace = const Duration(seconds: 10),
   })  : _connector = connector ?? connectTrustAll,
-        createdAt = DateTime.now() {
+        createdAt = DateTime.now(),
+        sid = TestLog.nextSid('cmd') {
     _connect();
   }
 
@@ -75,6 +77,7 @@ class CommandSession {
   final Prefs _prefs;
   final SocketConnector _connector;
   final DateTime createdAt;
+  final String sid;
   final Duration connectGrace;
 
   static const _readyWait = Duration(seconds: 8);
@@ -124,6 +127,7 @@ class CommandSession {
   }
 
   Future<void> _connect() async {
+    TestLog.sock('cmd', sid, 'connect');
     try {
       final ws = await connectWithTimeout(_connector, 'wss://$ip:3001', const Duration(seconds: 3));
       if (_state == CmdState.dead) {
@@ -134,15 +138,18 @@ class CommandSession {
       ws.pingInterval = const Duration(seconds: 15);
       _ws = ws;
       opened = true;
+      TestLog.sock('cmd', sid, 'open');
       ws.listen(_onMessage, onDone: _onDone, onError: _onError, cancelOnError: true);
       ws.add(encodeSsapMessage(buildRegistration(_prefs.clientKey)));
     } catch (e) {
       deadReason = e.toString();
+      TestLog.sock('cmd', sid, 'fail', reason: deadReason);
       _die(CmdReplyErr(deadReason ?? 'Connection failed'));
     }
   }
 
   void _onDone() {
+    TestLog.sock('cmd', sid, 'close', code: _ws?.closeCode, reason: _ws?.closeReason);
     if (_state == CmdState.dead) return;
     // A TV in standby accepts the upgrade and then closes with "Try Again
     // Later (EWS)" -- record the reason so the next send() surfaces it
@@ -153,6 +160,7 @@ class CommandSession {
   }
 
   void _onError(Object error) {
+    TestLog.sock('cmd', sid, 'fail', reason: error.toString());
     if (_state == CmdState.dead) return;
     deadReason = error.toString();
     _die(CmdReplyErr(deadReason ?? 'Connection failed'));
@@ -188,6 +196,7 @@ class CommandSession {
           'payload': {},
         }));
       }
+      TestLog.sock('cmd', sid, 'registered');
       _state = CmdState.ready;
       _settle();
       return;
@@ -196,6 +205,7 @@ class CommandSession {
     if (type == 'response' && id == regMessageId) {
       // TV challenged registration -- user must accept the pairing prompt.
       // "registered" arrives on this same socket once they do.
+      TestLog.sock('cmd', sid, 'prompt');
       _state = CmdState.needsPairing;
       _settle();
       _failAll(const CmdReplyNeedsPairing());
@@ -227,11 +237,13 @@ class CommandSession {
       final payloadOk = payload?['returnValue'] == true;
       if (returnValue == false || (msg['error'] is String && !payloadOk)) {
         final errorText = ssapErrorText(msg);
+        TestLog.res(sid, id, false, errorText);
         completer.complete(CmdReplyErr(
           errorText.isEmpty ? 'Command rejected by TV' : errorText,
           raw: msg,
         ));
       } else {
+        TestLog.res(sid, id, true, null);
         completer.complete(CmdReplyOk(payload ?? const {}, raw: msg));
       }
       return;
@@ -253,6 +265,7 @@ class CommandSession {
       final completer = _pending.remove(id);
       if (completer == null) return;
       final errorText = ssapErrorText(msg);
+      TestLog.res(sid, id, false, errorText);
       completer.complete(CmdReplyErr(errorText.isEmpty ? 'Unknown error' : errorText, raw: msg));
       return;
     }
@@ -326,6 +339,7 @@ class CommandSession {
       _pending.remove(id);
       return const CmdReplyErr('Not connected');
     }
+    TestLog.req(sid, id, uri);
 
     try {
       return await completer.future.timeout(Duration(seconds: timeoutSecs));
