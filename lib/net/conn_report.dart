@@ -44,7 +44,6 @@ class TvProbe {
     this.roundTripFailures = 0,
     this.pointerOpenMs,
     this.pointerFailure,
-    this.frameSendMs = const [],
   });
 
   final String? failure;
@@ -55,7 +54,6 @@ class TvProbe {
   final int roundTripFailures;
   final double? pointerOpenMs;
   final String? pointerFailure;
-  final List<double> frameSendMs;
 }
 
 class ReportInputs {
@@ -154,9 +152,6 @@ class ConnReport {
     }
     if (tv.pointerOpenMs != null) out.add('Pointer socket: opened in ${_fmt(tv.pointerOpenMs!)} ms');
     if (tv.pointerFailure != null) out.add('Pointer test failed: ${tv.pointerFailure}');
-    if (tv.frameSendMs.isNotEmpty) {
-      out.add('Pointer frame sends (${tv.frameSendMs.length}): ${spread(tv.frameSendMs)}');
-    }
     if (r.deaths.isEmpty) {
       out.add('Session deaths this run: none');
     } else {

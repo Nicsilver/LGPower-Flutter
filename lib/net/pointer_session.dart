@@ -541,9 +541,5 @@ class PointerSession {
     }
   }
 
-  /// A move by nothing: exercises the socket's send path without the cursor
-  /// going anywhere.
-  bool sendProbeFrame() => _state == PointerState.ready && _write(_Frame.delta('move', 0, 0));
-
   void close() => _fail(byCaller: true);
 }

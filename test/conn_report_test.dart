@@ -70,7 +70,6 @@ void main() {
       commandOpenMs: 183,
       roundTripsMs: [for (var i = 0; i < 10; i++) 6.0 + i],
       pointerOpenMs: 96,
-      frameSendMs: List.filled(10, 0.02),
     );
     final lines = ConnReport.finish(_inputs(tv, deaths: [
       DeathEntry(
@@ -83,7 +82,6 @@ void main() {
     expect(lines, contains('Wi-Fi: 5 GHz, RSSI -52 dBm, link speed 866 Mbps'));
     expect(lines, contains('Command connection: opened and registered in 183 ms'));
     expect(lines, contains('Command round trips (10): min 6.0 / median 11 / max 15 ms'));
-    expect(lines, contains('Pointer frame sends (10): min 0.02 / median 0.02 / max 0.02 ms'));
     expect(
       lines,
       contains('- 42s ago, cmd session died: cause=own close age=1ms sinceRx=never pointer=none'),
@@ -107,7 +105,6 @@ void main() {
       roundTripsMs: [5],
       roundTripFailures: 2,
       pointerOpenMs: 9,
-      frameSendMs: [0.1],
     );
     expect(ConnReport.finish(_inputs(tv)), ConnReport.render(_inputs(tv)));
   });

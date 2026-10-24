@@ -722,9 +722,13 @@ class WebOsClient {
     onStage?.call('Opening the command connection');
     final oldPointer = _sharedPointerSession;
     final oldCommand = _sharedCommandSession;
-    _sharedPointerSession = null;
+    // Closing a pointer mid-gesture would cut the user's own input.
+    var pointerBusy = oldPointer?.inUse ?? false;
+    if (!pointerBusy) {
+      _sharedPointerSession = null;
+      oldPointer?.close();
+    }
     _sharedCommandSession = null;
-    oldPointer?.close();
     oldCommand?.close(why: _probeClose);
 
     final opened = Stopwatch()..start();
@@ -762,6 +766,17 @@ class WebOsClient {
     onStage?.call('Opening the pointer socket');
     // The remote screen underneath re-warms a pointer as soon as the command session is up.
     final warmed = _sharedPointerSession;
+    if (warmed != null && warmed.inUse) pointerBusy = true;
+    if (pointerBusy) {
+      return TvProbe(
+        model: model,
+        software: software,
+        commandOpenMs: commandOpenMs,
+        roundTripsMs: trips,
+        roundTripFailures: failed,
+        pointerFailure: 'Pointer test skipped, remote in use',
+      );
+    }
     _sharedPointerSession = null;
     warmed?.close();
     final pointerWatch = Stopwatch()..start();
@@ -778,13 +793,6 @@ class WebOsClient {
     }
     final pointerOpenMs = ms(pointerWatch);
 
-    onStage?.call('Timing pointer frames');
-    final sends = <double>[];
-    for (var i = 0; i < count; i++) {
-      final w = Stopwatch()..start();
-      if (pointer.sendProbeFrame()) sends.add(ms(w));
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-    }
     return TvProbe(
       model: model,
       software: software,
@@ -792,8 +800,6 @@ class WebOsClient {
       roundTripsMs: trips,
       roundTripFailures: failed,
       pointerOpenMs: pointerOpenMs,
-      pointerFailure: sends.length < count ? '${count - sends.length} pointer frames were refused' : null,
-      frameSendMs: sends,
     );
   }
 
