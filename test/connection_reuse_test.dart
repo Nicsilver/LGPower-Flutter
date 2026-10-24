@@ -800,20 +800,47 @@ void main() {
       expect(created, 2);
     });
 
-    test('the command session dying drops the shared pointer session', () async {
+    test('the command session dying drops an idle shared pointer session', () async {
       final prefs = await _prefs();
       final client = WebOsClient(prefs,
-          pointerSessionFactory: (ip, p) => PointerSession(ip, p, connector: tv.connector()),
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p,
+              connector: tv.connector(), keepAfterInput: const Duration(milliseconds: 50)),
           commandSessionFactory: tv.commands());
       addTearDown(client.resetConnection);
 
       final pointer = client.pointerSession();
       expect(await pointer.waitUntilReady(), isTrue);
       expect(pointer.isUsable, isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(pointer.inUse, isFalse);
 
       tv.dropControlSockets();
       await _until(() => pointer.state == PointerState.dead);
       expect(client.pointerSession(), isNot(same(pointer)));
+    });
+
+    test('the command session dying keeps a pointer that carried input a moment ago', () async {
+      final prefs = await _prefs();
+      final client = WebOsClient(prefs,
+          pointerSessionFactory: (ip, p) => PointerSession(ip, p,
+              connector: tv.connector(), keepAfterInput: const Duration(seconds: 1)),
+          commandSessionFactory: tv.commands());
+      addTearDown(client.resetConnection);
+
+      final pointer = client.pointerSession();
+      expect(await pointer.waitUntilReady(), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      pointer.move(5, 0);
+      await _until(() => tv.pointerFrames.any((f) => f.startsWith('type:move')));
+
+      tv.dropControlSockets();
+      await _until(() => tv.openControlSockets == 0);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(pointer.isAlive, isTrue);
+      expect(client.pointerSession(), same(pointer));
+      pointer.move(5, 0);
+      await _until(() => tv.pointerFrames.where((f) => f.startsWith('type:move')).length == 2);
     });
   });
 

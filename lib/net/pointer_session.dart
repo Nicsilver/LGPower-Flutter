@@ -59,7 +59,9 @@ class PointerSession {
     Duration handshakeTimeout = defaultHandshakeTimeout,
     this.staleAfter = const Duration(milliseconds: 1500),
     this.firstOpenWindow = defaultFirstOpenWindow,
+    this.keepAfterInput = defaultKeepAfterInput,
   })  : createdAt = DateTime.now(),
+        _lastActiveAt = DateTime.now(),
         _connector = connector ?? connectTrustAll,
         _handshakeTimeout = handshakeTimeout {
     _handshakeTimer = Timer(handshakeTimeout, _fail);
@@ -77,6 +79,8 @@ class PointerSession {
   /// key could dismiss or replace it.
   PointerSession.blocked(this.ip, this._prefs)
       : createdAt = DateTime.now(),
+        _lastActiveAt = DateTime.now(),
+        keepAfterInput = defaultKeepAfterInput,
         connectGrace = const Duration(seconds: 10),
         staleAfter = const Duration(milliseconds: 1500),
         firstOpenWindow = defaultFirstOpenWindow,
@@ -109,6 +113,12 @@ class PointerSession {
   /// deadline unused.
   static const Duration defaultFirstOpenWindow = Duration(seconds: 1);
   final Duration firstOpenWindow;
+
+  /// How long after its last delivered frame (or after it opened) a session
+  /// still counts as in use, see [inUse].
+  static const Duration defaultKeepAfterInput = Duration(seconds: 5);
+  final Duration keepAfterInput;
+  DateTime _lastActiveAt;
 
   /// Queued cursor movement, clicks and held-key repeats older than this are
   /// dropped on flush: replayed late they would land at the wrong spot or
@@ -173,6 +183,12 @@ class PointerSession {
   bool get isConnecting =>
       _state == PointerState.connecting &&
       DateTime.now().difference(createdAt) < connectGrace;
+
+  /// Carried input moments ago: replacing it now would abort live work.
+  bool get inUse =>
+      _state != PointerState.dead &&
+      ip == _prefs.tvIp &&
+      DateTime.now().difference(_lastActiveAt) < keepAfterInput;
 
   /// A session mid-handshake is shared rather than replaced: a d-pad held
   /// down fires every 120 ms, and replacing the session on each press would
@@ -339,6 +355,7 @@ class PointerSession {
       _handshakeTimer?.cancel();
       _state = PointerState.ready;
       _wasReady = true;
+      _lastActiveAt = DateTime.now();
       _flushQueue();
       if (!_readyCompleter.isCompleted) _readyCompleter.complete();
     } catch (_) {
@@ -480,6 +497,7 @@ class PointerSession {
     if (ws == null) return false;
     try {
       ws.add(frame.encode());
+      _lastActiveAt = DateTime.now();
       return true;
     } catch (_) {
       _fail();

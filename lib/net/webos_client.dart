@@ -205,9 +205,12 @@ class WebOsClient {
     // The pointer socket has no ping of its own, so the command socket's
     // keepalive is what notices a silent Wi-Fi drop; a pointer session that
     // outlived it can look usable while its frames vanish.
+    // A pointer that carried input moments ago is kept too: it is evidently still
+    // delivering, and replacing it mid-drag stalls the cursor until a new command
+    // session registers, then lands everything moved meanwhile as one jump.
     unawaited(session.awaitDeath().then((_) {
       if (identical(_sharedCommandSession, session)) {
-        _dropPointer(where: (p) => p.state != PointerState.dead && !p.isConnecting);
+        _dropPointer(where: (p) => p.state != PointerState.dead && !p.isConnecting && !p.inUse);
       }
     }));
     return session;
