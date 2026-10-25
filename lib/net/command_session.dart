@@ -384,11 +384,13 @@ class CommandSession {
     }
     TestLog.req(sid, id, uri);
     try {
+      // A death that lands in the same turn as the reply must not count
       return await awaitReply(
-        answered: completer.future.then((_) {}),
-        died: _deathCompleter.future,
-        max: max,
-      );
+            answered: completer.future.then((_) {}),
+            died: _deathCompleter.future,
+            max: max,
+          ) &&
+          _state == CmdState.ready;
     } finally {
       _pending.remove(id);
     }

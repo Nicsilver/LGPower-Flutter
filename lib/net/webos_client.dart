@@ -384,11 +384,17 @@ class WebOsClient {
     // Before anything can pick the old pointer up
     final check = _resumeGate.begin();
     // The TV never writes on the pointer, so a close it sent while the phone dozed is never heard
-    if (oldPointer != null &&
-        shouldReplaceIdlePointer(
-            dead: oldPointer.isDead, idle: oldPointer.idleFor, maxIdle: resumePointerIdle) &&
-        _dropPointer(where: (p) => sameSession(p, oldPointer) && !p.inUse)) {
-      warmPointer();
+    try {
+      if (oldPointer != null &&
+          shouldReplaceIdlePointer(
+              dead: oldPointer.isDead, idle: oldPointer.idleFor, maxIdle: resumePointerIdle) &&
+          _dropPointer(where: (p) => sameSession(p, oldPointer) && !p.inUse)) {
+        warmPointer();
+      }
+    } catch (_) {
+      // A closed gate would hold every send until the safety timeout
+      _resumeGate.end(check);
+      rethrow;
     }
     return _resumeProbe(session, oldPointer, check);
   }
@@ -471,7 +477,11 @@ class WebOsClient {
     final oneShot = hold == null;
     for (var attempt = 0; attempt < 2; attempt++) {
       var session = pointerSession();
-      if (oneShot && attempt == 0) session = await _afterBackoff(session);
+      // An await costs a microtask even when it returns at once, which would let
+      // held repeats overtake earlier one-shot presses
+      if (oneShot && attempt == 0 && _backoffPending(session)) {
+        session = await _afterBackoff(session);
+      }
       final accepted = session.sendKey(keyCode, hold: hold);
       if (accepted && await session.waitUntilReady(timeout: session.connectGrace)) {
         return const Success();
@@ -493,6 +503,14 @@ class WebOsClient {
   // A key press right after a failed connect would otherwise fail on the spot
   // although the TV may be fine (a warm-up that hit a closing socket); waiting
   // out the cooldown turns it into a real attempt.
+  bool _backoffPending(PointerSession session) {
+    final failedAt = session.handshakeFailedAt;
+    if (session.state != PointerState.dead || failedAt == null || _pairingBlocked(session)) {
+      return false;
+    }
+    return pointerRetryBackoff - DateTime.now().difference(failedAt) > Duration.zero;
+  }
+
   Future<PointerSession> _afterBackoff(PointerSession session) async {
     final failedAt = session.handshakeFailedAt;
     if (session.state != PointerState.dead || failedAt == null || _pairingBlocked(session)) {

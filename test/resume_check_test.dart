@@ -482,6 +482,29 @@ void main() {
       expect(tv.buttons, ['UP', 'DOWN', 'LEFT', 'RIGHT']);
     });
 
+    test('a held repeat does not overtake earlier one-shot presses at the gate', () async {
+      final r = await rig();
+      final cmd = r.client.diagnosticSession();
+      await cmd.awaitReady();
+      final ptr = r.client.pointerSession();
+      expect(await ptr.waitUntilReady(), isTrue);
+      tv.goSilent();
+
+      final check = r.client.resumeConnection();
+      final h = Object();
+      final presses = [
+        r.client.pressKey('UP'),
+        r.client.pressKey('RIGHT', hold: h),
+        r.client.pressKey('RIGHT', hold: h),
+      ];
+      await check;
+      await Future.wait(presses);
+      await _until(() => tv.buttons.isNotEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      // Only the newest repeat of a hold is written
+      expect(tv.buttons, ['UP', 'RIGHT']);
+    });
+
     test('a repeat whose key was released while it waited never fires', () async {
       final r = await rig();
       final cmd = r.client.diagnosticSession();
