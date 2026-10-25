@@ -1,0 +1,48 @@
+name: Unsigned iOS ipa
+
+# Builds the already-tagged release as an unsigned .ipa for sideloading
+# (AltStore, Sideloadly re-sign it). Runs only from this branch; the Play and
+# TestFlight release stays in release.yml. Bump TAG to attach a newer build.
+on:
+  push:
+    branches: [ci/ipa]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TAG: v1.40.7
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build without signing
+        run: flutter build ios --release --no-codesign
+
+      - name: Package ipa
+        run: |
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
+          zip -qr "LGPower-${TAG#v}-unsigned.ipa" Payload
+          ls -l *.ipa
+
+      - name: Keep the ipa as a run artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lgpower-ipa
+          path: '*.ipa'
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" "LGPower-${TAG#v}-unsigned.ipa" --clobber --repo "${{ github.repository }}"
