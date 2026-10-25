@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/haptics.dart';
 import '../../net/ir.dart';
+import '../../net/webos_client.dart';
 import '../../theme/color_util.dart';
 import '../../theme/theme_config.dart';
 import '../../theme/theme_manager.dart';
@@ -12,42 +13,99 @@ import '../widgets/warning_sheet.dart';
 
 const _amber = Color(0xFFE8A33D);
 
-/// Full IR-only replica of LG's factory service remote (spec §4). Every tile
-/// transmits raw NEC 0x04 over the platform channel; there is no network
-/// fallback because the TV's service menus don't reliably answer SSAP.
+/// What the screen needs from the TV connection, so tests can stand in for it.
+abstract interface class ServiceLink {
+  Future<Result> launch(ServiceMenu menu);
+  Future<Result> close();
+  Future<String?> foregroundAppId();
+  Future<Result> pressKey(String key);
+}
+
+class ClientServiceLink implements ServiceLink {
+  const ClientServiceLink(this.client);
+  final WebOsClient client;
+
+  @override
+  Future<Result> launch(ServiceMenu menu) => client.launchServiceMenu(menu);
+  @override
+  Future<Result> close() => client.closeServiceMenu();
+  @override
+  Future<String?> foregroundAppId() => client.foregroundAppId();
+  @override
+  Future<Result> pressKey(String key) => client.pressKey(key);
+}
+
+// What WebOsClient says about a TV it never spoke to, as opposed to one that said no
+const _unreachable = [
+  'No TV IP',
+  'Timeout',
+  "Can't connect",
+  'Not connected',
+  'Connection',
+  'Session closed',
+  'Lost the connection',
+];
+
+const _pairingText = 'Accept pairing on your TV, then try again';
+const _unreachableText = "Can't reach the TV. Check it is on and on this Wi-Fi.";
+
+/// Replica of LG's factory service remote (spec §4). The IR keys transmit raw
+/// NEC 0x04 over the platform channel, so the phone must point at the TV.
+/// IN-START and EZ-ADJUST can also be opened over Wi-Fi through the launcher,
+/// which is the only way in on a phone without a blaster (and on iOS); there
+/// the digit and nav tiles ride the pointer socket instead. POWER-ONLY and
+/// IN-STOP stay IR-only (a reset or a locked TV is not something to fire from
+/// a network call).
 class ServiceRemoteScreen extends StatefulWidget {
   const ServiceRemoteScreen({
     super.key,
+    required this.link,
     this.hasEmitter = Ir.hasEmitter,
     this.transmit = Ir.transmit,
+    this.menuPollDelay = const Duration(milliseconds: 600),
   });
+
+  final ServiceLink link;
 
   /// Injectable for tests; defaults to the real platform channel.
   final Future<bool> Function() hasEmitter;
   final Future<void> Function(int carrierHz, List<int> pattern) transmit;
+  final Duration menuPollDelay;
 
   @override
   State<ServiceRemoteScreen> createState() => _ServiceRemoteScreenState();
 }
 
 class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
+  // Null until the emitter check answers; the grid is built after that
+  bool? _hasIr;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _showEntrySheet());
+    unawaited(_init());
   }
 
-  Future<void> _showEntrySheet() async {
+  Future<void> _init() async {
     final hasEmitter = await widget.hasEmitter();
+    if (!mounted) return;
+    setState(() => _hasIr = hasEmitter);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showEntrySheet(hasEmitter));
+  }
+
+  Future<void> _showEntrySheet(bool hasEmitter) async {
     if (!mounted) return;
     if (!hasEmitter) {
       await showWarningSheet(
         context,
-        chip: 'NO IR BLASTER',
-        title: "This phone can't transmit",
-        body: "The service remote sends raw IR and this phone has no IR emitter. "
-            "It needs a phone with a built-in IR blaster.",
-        button: 'Got it',
+        chip: 'FACTORY CONTROLS',
+        title: 'This can wreck your TV',
+        body: "Service menu settings can break your TV. Only change what you know.\n\n"
+            "Wrong EZ-Adjust values (panel, white balance) can permanently ruin the "
+            "picture, and wrong IN-START values can leave the TV misconfigured. "
+            "Note every value down before changing it. If you're just curious: "
+            "look, don't touch.",
+        button: 'I understand the risks',
         onCancel: _closeScreen,
       );
     } else {
@@ -82,6 +140,66 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
     await widget.transmit(38000, Ir.necPattern(Ir.lgCode(cmd)));
   }
 
+  void _toast(String text) {
+    if (mounted) showToast(context, text, long: true);
+  }
+
+  Future<void> _sendKey(int irCmd, String? tvKey) async {
+    if (_hasIr == true || tvKey == null) return _sendIr(irCmd);
+    Haptics.selection();
+    final r = await widget.link.pressKey(tvKey);
+    switch (r) {
+      case NeedsPairing():
+        _toast(_pairingText);
+      case CmdError(:final message):
+        _toast(message);
+      case Success():
+    }
+  }
+
+  String _refusedText() =>
+      "Your TV didn't open the service menu over Wi-Fi.${_hasIr == true ? ' Try IR.' : ''}";
+
+  Future<void> _openOverWifi(ServiceMenu menu) async {
+    Haptics.selection();
+    final r = await widget.link.launch(menu);
+    final problem = switch (r) {
+      NeedsPairing() => _pairingText,
+      CmdError(:final message) =>
+        _unreachable.any((p) => message.toLowerCase().startsWith(p.toLowerCase()))
+            ? _unreachableText
+            : _refusedText(),
+      Success() => await _menuIsUp() ? null : _refusedText(),
+    };
+    if (problem != null) _toast(problem);
+  }
+
+  // A TV that accepts the launch but never shows the menu still answers
+  // success, so the foreground app is the check. A reply that can't be read
+  // counts as open: a false "didn't open" while the menu is on screen is
+  // worse than missing a silent ignore.
+  Future<bool> _menuIsUp() async {
+    for (var i = 0; i < 4; i++) {
+      await Future<void>.delayed(widget.menuPollDelay);
+      if (!mounted) return true;
+      final id = await widget.link.foregroundAppId();
+      if (id == null || id == factoryAppId) return true;
+    }
+    return false;
+  }
+
+  Future<void> _closeOverWifi() async {
+    Haptics.selection();
+    final r = await widget.link.close();
+    switch (r) {
+      case NeedsPairing():
+        _toast(_pairingText);
+      case CmdError(:final message):
+        _toast(message);
+      case Success():
+    }
+  }
+
   void _confirmTile(String title, int cmd, String body) {
     Haptics.selection();
     unawaited(showWarningSheet(
@@ -97,6 +215,8 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = AppTheme.of(context);
+    final hasIr = _hasIr;
+    if (hasIr == null) return Scaffold(backgroundColor: theme.windowBg);
     return Scaffold(
       backgroundColor: theme.windowBg,
       body: SafeArea(
@@ -118,68 +238,100 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
               Padding(
                 padding: const EdgeInsets.only(top: 3, bottom: 9),
                 child: Text(
-                  'NEC 0x04 over IR · aim at the TV',
+                  hasIr ? 'Wi-Fi launch · NEC 0x04 over IR, aim at the TV' : 'Over Wi-Fi · the TV must be on',
                   style: TextStyle(fontSize: 10.5, fontFamily: 'monospace', color: theme.sectionLabel),
                 ),
               ),
               const _HazardBand(),
-              _label(theme, 'FACTORY ENTRY'),
-              _row([
-                _tile(theme, 'IN-START', 0xFB, service: true),
-                _tile(theme, 'EZ-ADJUST', 0xFF, service: true),
-              ]),
+              _label(theme, 'OVER WI-FI'),
               _row([
                 _tile(
                   theme,
-                  'POWER-ONLY',
-                  0xFE,
+                  'IN-START',
+                  0,
                   service: true,
-                  onTap: () => _confirmTile(
+                  tileKey: const ValueKey('wifi-IN-START'),
+                  onTap: () => unawaited(_openOverWifi(ServiceMenu.inStart)),
+                ),
+                _tile(
+                  theme,
+                  'EZ-ADJUST',
+                  0,
+                  service: true,
+                  tileKey: const ValueKey('wifi-EZ-ADJUST'),
+                  onTap: () => unawaited(_openOverWifi(ServiceMenu.ezAdjust)),
+                ),
+                _tile(
+                  theme,
+                  'CLOSE MENU',
+                  0,
+                  tileKey: const ValueKey('wifi-CLOSE'),
+                  onTap: () => unawaited(_closeOverWifi()),
+                ),
+              ]),
+              if (hasIr) ...[
+                _label(theme, 'FACTORY ENTRY · IR'),
+                _row([
+                  _tile(theme, 'IN-START', 0xFB, service: true),
+                  _tile(theme, 'EZ-ADJUST', 0xFF, service: true),
+                ]),
+                _row([
+                  _tile(
+                    theme,
                     'POWER-ONLY',
                     0xFE,
-                    "Locks the TV into power-only mode: it stops responding to everything "
-                        "except the power button, and the only way back out is through the "
-                        "service menu. Don't send this unless you know why you need it.",
+                    service: true,
+                    onTap: () => _confirmTile(
+                      'POWER-ONLY',
+                      0xFE,
+                      "Locks the TV into power-only mode: it stops responding to everything "
+                          "except the power button, and the only way back out is through the "
+                          "service menu. Don't send this unless you know why you need it.",
+                    ),
                   ),
-                ),
-                _tile(
-                  theme,
-                  'IN-STOP',
-                  0xFA,
-                  service: true,
-                  onTap: () => _confirmTile(
+                  _tile(
+                    theme,
                     'IN-STOP',
                     0xFA,
-                    "FACTORY RESETS THE TV. Instantly, with no prompt on the TV.\n\n"
-                        "This is the production line's 'prepare for shipment' command. It wipes "
-                        "all settings, accounts, apps and pairings and restarts the TV into "
-                        "out-of-box setup. Panel calibration survives, nothing else does.",
+                    service: true,
+                    onTap: () => _confirmTile(
+                      'IN-STOP',
+                      0xFA,
+                      "FACTORY RESETS THE TV. Instantly, with no prompt on the TV.\n\n"
+                          "This is the production line's 'prepare for shipment' command. It wipes "
+                          "all settings, accounts, apps and pairings and restarts the TV into "
+                          "out-of-box setup. Panel calibration survives, nothing else does.",
+                    ),
                   ),
-                ),
-              ]),
+                ]),
+              ],
               _label(theme, 'PASSWORD · 0413 / 0000'),
-              _row([_tile(theme, '1', 0x11), _tile(theme, '2', 0x12), _tile(theme, '3', 0x13)]),
-              _row([_tile(theme, '4', 0x14), _tile(theme, '5', 0x15), _tile(theme, '6', 0x16)]),
-              _row([_tile(theme, '7', 0x17), _tile(theme, '8', 0x18), _tile(theme, '9', 0x19)]),
-              _row([_spacer(), _tile(theme, '0', 0x10), _spacer()]),
+              _row([_tile(theme, '1', 0x11, key: '1'), _tile(theme, '2', 0x12, key: '2'), _tile(theme, '3', 0x13, key: '3')]),
+              _row([_tile(theme, '4', 0x14, key: '4'), _tile(theme, '5', 0x15, key: '5'), _tile(theme, '6', 0x16, key: '6')]),
+              _row([_tile(theme, '7', 0x17, key: '7'), _tile(theme, '8', 0x18, key: '8'), _tile(theme, '9', 0x19, key: '9')]),
+              _row([_spacer(), _tile(theme, '0', 0x10, key: '0'), _spacer()]),
               _label(theme, 'NAV'),
               _row([
-                _tile(theme, 'BACK', 0x28),
-                _tile(theme, '▲', 0x40),
-                _tile(theme, 'EXIT', 0x5B),
+                _tile(theme, 'BACK', 0x28, key: 'BACK'),
+                _tile(theme, '▲', 0x40, key: 'UP'),
+                _tile(theme, 'EXIT', 0x5B, key: 'EXIT'),
               ]),
               _row([
-                _tile(theme, '◀', 0x07),
-                _tile(theme, 'OK', 0x44),
-                _tile(theme, '▶', 0x06),
+                _tile(theme, '◀', 0x07, key: 'LEFT'),
+                _tile(theme, 'OK', 0x44, key: 'ENTER'),
+                _tile(theme, '▶', 0x06, key: 'RIGHT'),
               ]),
-              _row([_tile(theme, 'PWR', 0x08), _tile(theme, '▼', 0x41), _spacer()]),
+              _row([
+                hasIr ? _tile(theme, 'PWR', 0x08) : _spacer(),
+                _tile(theme, '▼', 0x41, key: 'DOWN'),
+                _spacer(),
+              ]),
               Padding(
                 padding: const EdgeInsets.only(top: 14),
                 child: SizedBox(
                   width: double.infinity,
                   child: Text(
-                    'IR ONLY · AIM THE PHONE AT THE TV',
+                    hasIr ? 'KEYS OVER IR · AIM THE PHONE AT THE TV' : 'KEYS OVER WI-FI · THE TV MUST BE ON',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 9,
@@ -233,6 +385,8 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
     String label,
     int cmd, {
     bool service = false,
+    String? key,
+    Key? tileKey,
     VoidCallback? onTap,
   }) {
     final bg = service ? ColorUtil.mix(theme.windowBg, _amber, 0.07) : ColorUtil.mix(theme.windowBg, theme.surfaceBg, 0.55);
@@ -241,13 +395,14 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
         : ColorUtil.mix(theme.surfaceBg, theme.primaryText, 0.12);
     final textColor = service ? _amber : theme.primaryText;
     return SizedBox(
+      key: tileKey,
       height: 46,
       child: Material(
         color: bg,
         borderRadius: BorderRadius.circular(6),
         child: InkWell(
           borderRadius: BorderRadius.circular(6),
-          onTap: onTap ?? () => unawaited(_sendIr(cmd)),
+          onTap: onTap ?? () => unawaited(_sendKey(cmd, key)),
           child: Container(
             alignment: Alignment.center,
             decoration: BoxDecoration(

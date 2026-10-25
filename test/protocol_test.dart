@@ -134,6 +134,21 @@ void main() {
     });
   });
 
+  group('service menu', () {
+    // The fake only moves its foreground app when the launch names factorywin,
+    // so a changed foreground proves the id reached it; params are in its log.
+    test('launch puts factorywin in front, close takes it away', () async {
+      final prefs = await _freshPrefs();
+      final client = WebOsClient(prefs);
+      addTearDown(client.resetConnection);
+
+      expect(await client.launchServiceMenu(ServiceMenu.inStart), isA<Success>());
+      expect(await client.foregroundAppId(), factoryAppId);
+      expect(await client.closeServiceMenu(), isA<Success>());
+      expect(await client.foregroundAppId(), isNot(factoryAppId));
+    });
+  });
+
   group('pointer socket', () {
     test('pressKey succeeds (pointer socket handshake works)', () async {
       final prefs = await _freshPrefs();

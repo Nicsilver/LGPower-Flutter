@@ -42,6 +42,18 @@ class CmdError extends Result {
   final String message;
 }
 
+const String factoryAppId = 'com.webos.app.factorywin';
+
+/// inStop (factory reset) and tilt (locks the remote until a reboot) have no
+/// entry here on purpose.
+enum ServiceMenu {
+  inStart('inStart'),
+  ezAdjust('ezAdjust');
+
+  const ServiceMenu(this.irKey);
+  final String irKey;
+}
+
 // Observed on a C4: turnOff pushes state "Active" with processing "Request
 // Power Off" within 50 ms, then "Request/Prepare Active Standby", and lands
 // on "Active Standby" ~3 s later.
@@ -799,6 +811,31 @@ class WebOsClient {
 
   Future<Result> launchApp(String id) =>
       _execute('ssap://system.launcher/launch', payload: {'id': id});
+
+  /// The factory menus are the launcher's `com.webos.app.factorywin` app with
+  /// an `irKey`, the same call ColorControl and bscpylgtv make.
+  Future<Result> launchServiceMenu(ServiceMenu menu) => _execute(
+        'ssap://system.launcher/launch',
+        payload: {
+          'id': factoryAppId,
+          'params': {'id': 'executeFactory', 'irKey': menu.irKey},
+        },
+      );
+
+  Future<Result> closeServiceMenu() =>
+      _execute('ssap://system.launcher/close', payload: {'id': factoryAppId});
+
+  /// Null when the TV doesn't say, which callers must not read as "not open".
+  Future<String?> foregroundAppId() async {
+    if (tvIp.isEmpty) return null;
+    final reply = await _commandSession().send(
+      'ssap://com.webos.applicationManager/getForegroundAppInfo',
+      timeoutSecs: 3,
+    );
+    if (reply is! CmdReplyOk) return null;
+    final id = reply.payload['appId'];
+    return id is String && id.isNotEmpty ? id : null;
+  }
 
   Future<Result> sendText(String text) => _execute(
         'ssap://com.webos.service.ime/insertText',

@@ -395,7 +395,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _openServiceRemote() {
     Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const ServiceRemoteScreen()));
+    ).push(MaterialPageRoute(builder: (_) => ServiceRemoteScreen(link: ClientServiceLink(widget.client))));
   }
 
   // The tour runs on the remote itself, so hand back to it
@@ -482,7 +482,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 cardKey: _appearanceGroupKey,
                 child: _appearanceGroup(theme),
               ),
-              if (_hasIrEmitter && !widget.limited)
+              if (!widget.limited)
                 _section('Advanced', child: _advancedGroup(theme)),
               _section('About', child: _aboutGroup(theme)),
             ],
@@ -743,7 +743,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _advancedGroup(ThemeConfig theme) {
     return _navRow(
       theme,
-      label: 'Service Remote (IR)',
+      label: 'Service Remote',
       onTap: _openServiceRemote,
       correctedChevron: false,
     );
