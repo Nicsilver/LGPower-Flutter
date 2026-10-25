@@ -227,6 +227,7 @@ class TouchpadController extends ChangeNotifier {
     _pointers[id] = global;
     if (_pointers.length == 1) {
       _dragTotalDist = 0;
+      _moveAccumulator = 0;
       _overlayDragging = false;
       _scrolling = false;
       _resetMoves();
@@ -264,6 +265,14 @@ class TouchpadController extends ChangeNotifier {
       if (_dragTotalDist >= _tapThresholdPx) {
         _overlayDragging = true;
         _resetMoves();
+      }
+    } else {
+      // Only once the drag has started, and in physical pixels: the same
+      // tick spacing as the Kotlin pad.
+      _moveAccumulator += math.sqrt(dx * dx + dy * dy) * _dpr;
+      if (_moveAccumulator >= _hapticMovePx) {
+        Haptics.selection();
+        _moveAccumulator = 0;
       }
     }
     if (_overlayDragging) _queueMove(dx * _dpr, dy * _dpr, timeStamp);

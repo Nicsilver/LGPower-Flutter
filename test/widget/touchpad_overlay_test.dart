@@ -1,6 +1,7 @@
 // The locked touchpad against a recording pointer session: what each overlay
 // control sends to the TV, and how drag movement is batched.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -190,6 +191,62 @@ void main() {
       await g.up();
       expect(h.moves.fold<int>(0, (a, m) => a + m.$1), 46);
       expect(h.moves.length, greaterThan(5));
+    });
+  });
+
+  group('drag ticks', () {
+    // A tick every 32 physical px of drag travel, none for the movement that
+    // only decides tap versus drag, as the Kotlin pad does.
+    late List<String> haptics;
+
+    setUp(() {
+      haptics = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'HapticFeedback.vibrate') haptics.add(call.arguments as String);
+        return null;
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    int selectionTicks() => haptics.where((h) => h == 'HapticFeedbackType.selectionClick').length;
+
+    testWidgets('dragging inside the locked pad ticks every 32 physical px', (tester) async {
+      await _pumpLockedPad(tester);
+      haptics.clear();
+      final g = await tester.startGesture(const Offset(200, 600));
+      await g.moveBy(const Offset(20, 0), timeStamp: _ms(0));
+      expect(selectionTicks(), 0);
+      // 5 logical px = 15 physical: the third move passes 32.
+      for (var i = 1; i <= 10; i++) {
+        await g.moveBy(const Offset(5, 0), timeStamp: _ms(17 * i));
+      }
+      await g.up();
+      expect(selectionTicks(), 3);
+    });
+
+    testWidgets('a tap-sized wobble and a two-finger scroll do not tick', (tester) async {
+      await _pumpLockedPad(tester);
+      haptics.clear();
+      final tap = await tester.startGesture(const Offset(200, 600));
+      await tap.moveBy(const Offset(4, 0), timeStamp: _ms(0));
+      await tap.moveBy(const Offset(0, 4), timeStamp: _ms(17));
+      await tap.up();
+      expect(selectionTicks(), 0);
+
+      final a = await tester.startGesture(const Offset(200, 600), pointer: 1);
+      final b = await tester.startGesture(const Offset(260, 600), pointer: 2);
+      for (var i = 1; i <= 5; i++) {
+        await a.moveBy(const Offset(0, 20), timeStamp: _ms(17 * i));
+        await b.moveBy(const Offset(0, 20), timeStamp: _ms(17 * i));
+      }
+      await a.up();
+      await b.up();
+      expect(selectionTicks(), 0);
     });
   });
 
