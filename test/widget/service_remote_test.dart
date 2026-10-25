@@ -248,6 +248,21 @@ void main() {
     await _expireToast(tester);
   });
 
+  testWidgets('a double tap on a Wi-Fi tile launches once', (tester) async {
+    _setPhoneSize(tester);
+    final controller = await _harness();
+    final link = _FakeLink();
+    await _open(tester, controller, _FakeIr(hasEmitter: true), link);
+
+    await tester.tap(find.byKey(_wifiStart));
+    await tester.tap(find.byKey(_wifiStart));
+    await tester.tap(find.byKey(_wifiClose));
+    await tester.pumpAndSettle();
+
+    expect(link.launched, [ServiceMenu.inStart]);
+    expect(link.closed, 0);
+  });
+
   testWidgets('a foreground reply that cannot be read is not a refusal', (tester) async {
     _setPhoneSize(tester);
     final controller = await _harness();
@@ -281,7 +296,7 @@ void main() {
     link.launchResult = const NeedsPairing();
     await tester.tap(find.byKey(_wifiStart));
     await tester.pumpAndSettle();
-    expect(find.text('Accept pairing on your TV, then try again'), findsOneWidget);
+    expect(find.text('Accept pairing on your TV, then try again.'), findsOneWidget);
     await _expireToast(tester);
   });
 

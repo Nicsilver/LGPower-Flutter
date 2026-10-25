@@ -46,7 +46,7 @@ const _unreachable = [
   'Lost the connection',
 ];
 
-const _pairingText = 'Accept pairing on your TV, then try again';
+const _pairingText = 'Accept pairing on your TV, then try again.';
 const _unreachableText = "Can't reach the TV. Check it is on and on this Wi-Fi.";
 
 /// Replica of LG's factory service remote (spec §4). The IR keys transmit raw
@@ -79,6 +79,9 @@ class ServiceRemoteScreen extends StatefulWidget {
 class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
   // Null until the emitter check answers; the grid is built after that
   bool? _hasIr;
+
+  // A double tap would launch or close the factory app twice
+  bool _menuBusy = false;
 
   @override
   void initState() {
@@ -160,18 +163,24 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
   String _refusedText() =>
       "Your TV didn't open the service menu over Wi-Fi.${_hasIr == true ? ' Try IR.' : ''}";
 
+  bool _isUnreachable(String message) =>
+      _unreachable.any((p) => message.toLowerCase().startsWith(p.toLowerCase()));
+
   Future<void> _openOverWifi(ServiceMenu menu) async {
+    if (_menuBusy) return;
+    _menuBusy = true;
     Haptics.selection();
-    final r = await widget.link.launch(menu);
-    final problem = switch (r) {
-      NeedsPairing() => _pairingText,
-      CmdError(:final message) =>
-        _unreachable.any((p) => message.toLowerCase().startsWith(p.toLowerCase()))
-            ? _unreachableText
-            : _refusedText(),
-      Success() => await _menuIsUp() ? null : _refusedText(),
-    };
-    if (problem != null) _toast(problem);
+    try {
+      final r = await widget.link.launch(menu);
+      final problem = switch (r) {
+        NeedsPairing() => _pairingText,
+        CmdError(:final message) => _isUnreachable(message) ? _unreachableText : _refusedText(),
+        Success() => await _menuIsUp() ? null : _refusedText(),
+      };
+      if (problem != null) _toast(problem);
+    } finally {
+      _menuBusy = false;
+    }
   }
 
   // A TV that accepts the launch but never shows the menu still answers
@@ -189,14 +198,20 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
   }
 
   Future<void> _closeOverWifi() async {
+    if (_menuBusy) return;
+    _menuBusy = true;
     Haptics.selection();
-    final r = await widget.link.close();
-    switch (r) {
-      case NeedsPairing():
-        _toast(_pairingText);
-      case CmdError(:final message):
-        _toast(message);
-      case Success():
+    try {
+      final r = await widget.link.close();
+      switch (r) {
+        case NeedsPairing():
+          _toast(_pairingText);
+        case CmdError(:final message):
+          _toast(_isUnreachable(message) ? _unreachableText : message);
+        case Success():
+      }
+    } finally {
+      _menuBusy = false;
     }
   }
 
