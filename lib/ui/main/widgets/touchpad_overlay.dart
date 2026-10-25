@@ -287,7 +287,7 @@ class TouchpadController extends ChangeNotifier {
       _stopPacing();
       if (wasSingle && !_overlayDragging && !_scrolling) {
         Haptics.light();
-        _pointer?.click();
+        client.pointerClick();
       }
       _scrolling = false;
       _overlayDragging = false;
@@ -302,13 +302,13 @@ class TouchpadController extends ChangeNotifier {
   void overlayBack() {
     Haptics.light();
     flushMoves();
-    _pointer?.sendKey('BACK');
+    client.pointerKey('BACK');
   }
 
   void overlayClick() {
     Haptics.light();
     flushMoves();
-    _pointer?.click();
+    client.pointerClick();
   }
 
   @override

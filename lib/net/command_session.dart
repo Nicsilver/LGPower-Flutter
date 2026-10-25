@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../core/prefs.dart';
 import '../core/test_log.dart';
+import 'resume_check.dart' show awaitReply;
 import 'ssap_messages.dart';
 import 'ws_connect.dart';
 import 'wol.dart' show macList;
@@ -102,6 +103,10 @@ class CommandSession {
   /// cause wins: close() also triggers the socket's own done callback.
   String? deathCause;
   DateTime? diedAt;
+
+  /// Closed by a resume check that found it silent, so the power watcher
+  /// reconnects without its standby pause.
+  bool replacedAsStale = false;
 
   /// The TV answered the registration with an error (prompt denied or timed
   /// out), as opposed to the socket just dropping.
@@ -360,6 +365,32 @@ class CommandSession {
     } on TimeoutException {
       _pending.remove(id);
       return const CmdReplyErr('Timeout. Is the TV on and reachable?');
+    }
+  }
+
+  /// True when the TV answers a request on this socket within [max]. Any reply
+  /// counts, an error included; the socket dying meanwhile ends the wait early.
+  Future<bool> answersWithin(Duration max, String uri) async {
+    final ws = _ws;
+    if (_state != CmdState.ready || ws == null) return false;
+    final id = _idSeq.nextRequestId();
+    final completer = Completer<CmdReply>();
+    _pending[id] = completer;
+    try {
+      ws.add(encodeSsapMessage({'id': id, 'type': 'request', 'uri': uri, 'payload': {}}));
+    } catch (_) {
+      _pending.remove(id);
+      return false;
+    }
+    TestLog.req(sid, id, uri);
+    try {
+      return await awaitReply(
+        answered: completer.future.then((_) {}),
+        died: _deathCompleter.future,
+        max: max,
+      );
+    } finally {
+      _pending.remove(id);
     }
   }
 

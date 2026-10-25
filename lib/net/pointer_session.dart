@@ -190,6 +190,11 @@ class PointerSession {
       _state == PointerState.connecting &&
       DateTime.now().difference(createdAt) < connectGrace;
 
+  /// How long nothing was delivered on it, counted from when it opened.
+  Duration get idleFor => DateTime.now().difference(_lastActiveAt);
+
+  bool get isDead => _state == PointerState.dead;
+
   /// Carried input moments ago: replacing it now would abort live work.
   bool get inUse =>
       _state != PointerState.dead &&

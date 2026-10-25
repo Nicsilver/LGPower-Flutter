@@ -10,12 +10,14 @@ import 'package:palette_generator/palette_generator.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/prefs.dart';
+import '../core/test_log.dart';
 import '../core/tv_store.dart';
 import '../core/wake_action.dart';
 import 'command_session.dart';
 import 'conn_report.dart';
 import 'keyboard.dart';
 import 'pointer_session.dart';
+import 'resume_check.dart';
 import 'wol.dart' as wol;
 
 const String _powerStateUri =
@@ -156,6 +158,8 @@ class WebOsClient {
     this.pointerRetryBackoff = const Duration(seconds: 1),
     this.pairingBlockExpiry = const Duration(seconds: 30),
     this.watchReadyWait = const Duration(seconds: 5),
+    this.resumeProbe = const Duration(seconds: 1),
+    this.resumePointerIdle = const Duration(seconds: 30),
     void Function(String line)? connLog,
   })  : _connLog = connLog ?? ((line) => debugPrint('LgpConn: $line')),
         _commandSessionFactory = commandSessionFactory ?? CommandSession.new,
@@ -184,6 +188,21 @@ class WebOsClient {
   /// How long each round of the power watcher waits for the command session to
   /// leave CONNECTING before looking again.
   final Duration watchReadyWait;
+
+  /// How long the resume check waits for the old command socket to answer.
+  /// Several round trips even on a jittery Wi-Fi: a false alarm only costs the
+  /// handshake every resume used to cost, a socket that really died costs this
+  /// much on top of it.
+  final Duration resumeProbe;
+
+  /// A pointer idle for longer than this is replaced on resume even when the
+  /// command socket answers.
+  final Duration resumePointerIdle;
+
+  Duration get _resumeGateMax => resumeProbe + const Duration(milliseconds: 500);
+
+  final _resumeGate = ResumeGate();
+  final _endedHolds = Expando<bool>('ended hold');
 
   CommandSession? _sharedCommandSession;
   PointerSession? _sharedPointerSession;
@@ -348,12 +367,68 @@ class WebOsClient {
     _sharedCommandSession = null;
   }
 
+  /// Keeps the shared connections across a return to the foreground when the
+  /// TV still answers on them, else drops both as [resetConnection] does.
+  /// Completes when the verdict is in; the idle-pointer swap has happened by
+  /// the time this returns.
+  Future<void> resumeConnection() {
+    final command = _sharedCommandSession;
+    final step = resumeStep(
+        commandReady: command != null && command.state == CmdState.ready && command.ip == tvIp);
+    if (step == ResumeStep.reset) {
+      resetConnection();
+      return Future.value();
+    }
+    final session = command!;
+    final oldPointer = _sharedPointerSession;
+    // Before anything can pick the old pointer up
+    final check = _resumeGate.begin();
+    // The TV never writes on the pointer, so a close it sent while the phone dozed is never heard
+    if (oldPointer != null &&
+        shouldReplaceIdlePointer(
+            dead: oldPointer.isDead, idle: oldPointer.idleFor, maxIdle: resumePointerIdle) &&
+        _dropPointer(where: (p) => sameSession(p, oldPointer) && !p.inUse)) {
+      warmPointer();
+    }
+    return _resumeProbe(session, oldPointer, check);
+  }
+
+  Future<void> _resumeProbe(
+      CommandSession session, PointerSession? oldPointer, Object check) async {
+    try {
+      final answered = await probeCommand(
+        markStale: (v) => session.replacedAsStale = v,
+        probe: () => session.answersWithin(resumeProbe, _powerStateUri),
+      );
+      if (answered) {
+        TestLog.sock('cmd', session.sid, 'resume-keep');
+      } else {
+        TestLog.sock('cmd', session.sid, 'resume-stale');
+        _replaceStale(session, oldPointer);
+      }
+    } finally {
+      _resumeGate.end(check);
+    }
+  }
+
+  // Unlike resetConnection this ignores recent traffic: anything sent since
+  // the resume went into a socket that has just failed to answer.
+  void _replaceStale(CommandSession command, PointerSession? pointer) {
+    if (identical(_sharedCommandSession, command)) _sharedCommandSession = null;
+    command.replacedAsStale = true;
+    // A pointer opened since the resume is fresh and is left to finish its handshake
+    _dropPointer(where: (p) => sameSession(p, pointer));
+    command.close(why: 'silent on resume');
+    warmPointer();
+  }
+
   Future<Result> _execute(
     String uri, {
     Map<String, dynamic> payload = const {},
     int timeoutSecs = 6,
   }) async {
     if (tvIp.isEmpty) return const CmdError('No TV IP configured');
+    await _resumeGate.wait(_resumeGateMax);
     final reply = await _commandSession().send(uri, payload: payload, timeoutSecs: timeoutSecs);
     return switch (reply) {
       CmdReplyOk() => const Success(),
@@ -363,7 +438,22 @@ class WebOsClient {
   }
 
   /// Ends a held d-pad key: repeats still queued for it are discarded.
-  void endHold(Object hold) => _sharedPointerSession?.dropRepeats(hold);
+  void endHold(Object hold) {
+    _endedHolds[hold] = true;
+    _sharedPointerSession?.dropRepeats(hold);
+  }
+
+  /// A click on the shared pointer. A tap on a half-open pointer is lost
+  /// without any error, so it waits for the resume verdict like a key does.
+  /// Moves are streams of frames and stay unheld.
+  void pointerClick() => _afterResumeCheck((p) => p.click());
+
+  void pointerKey(String keyCode) => _afterResumeCheck((p) => p.sendKey(keyCode));
+
+  void _afterResumeCheck(void Function(PointerSession) send) {
+    if (tvIp.isEmpty) return;
+    _resumeGate.runAfter(_resumeGateMax, () => send(pointerSession()));
+  }
 
   /// The key is handed to the shared pointer session before any await, so
   /// presses keep their order even while the session is still connecting; the
@@ -372,6 +462,12 @@ class WebOsClient {
   /// for a retry.
   Future<Result> pressKey(String keyCode, {Object? hold}) async {
     if (tvIp.isEmpty) return const CmdError('No TV IP configured');
+    // No await on an open gate: presses must reach the session in call order
+    if (!_resumeGate.isOpen) {
+      await _resumeGate.wait(_resumeGateMax);
+      // A repeat whose key was let go while it waited would fire after the release
+      if (hold != null && _endedHolds[hold] == true) return const CmdError('Released');
+    }
     final oneShot = hold == null;
     for (var attempt = 0; attempt < 2; attempt++) {
       var session = pointerSession();
@@ -866,7 +962,7 @@ class WebOsClient {
             if (subId != null) session.unsubscribe(subId);
             if (cancelCompleter.isCompleted) break;
             final lifetime = DateTime.now().difference(since);
-            delayMs = lifetime < const Duration(seconds: 2) ? 5000 : 0;
+            delayMs = lifetime < const Duration(seconds: 2) && !session.replacedAsStale ? 5000 : 0;
           case CmdState.needsPairing:
             _publish(const PresenceNeedsPairing(), listener);
             // The TV answers on this same socket once the prompt is accepted.
@@ -1159,6 +1255,7 @@ class WebOsClient {
 
   Future<Result> _lunaRequest(String uri, Map<String, dynamic> params) async {
     if (tvIp.isEmpty) return const CmdError('No TV IP configured');
+    await _resumeGate.wait(_resumeGateMax);
     final lunaUri = 'luna://$uri';
     final session = _commandSession();
 
