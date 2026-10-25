@@ -103,7 +103,12 @@ class RemoteController extends ChangeNotifier {
   /// onResume: rebuild the shared session, re-read the right-pill pref,
   /// rebuild shortcuts, restore cached levels, start watching.
   Future<void> onResume() async {
-    unawaited(client.resumeConnection());
+    try {
+      unawaited(client.resumeConnection());
+    } catch (e) {
+      // The gate is already ended; watching must still start below
+      debugPrint('resumeConnection failed: $e');
+    }
     TvStore.syncFromLive(prefs);
     tvName = TvStore.activeName(prefs);
     rightPill = RightPill.get(prefs);
