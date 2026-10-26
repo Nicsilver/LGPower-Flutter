@@ -13,6 +13,7 @@ import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/theme/theme_manager.dart';
 import 'package:lgpower/ui/main/main_screen.dart';
 import 'package:lgpower/ui/main/remote_controller.dart';
+import 'package:lgpower/ui/main/widgets/dpad_page.dart';
 import 'package:lgpower/ui/main/widgets/level_pill.dart';
 import 'package:lgpower/ui/main/widgets/numpad_page.dart';
 
@@ -259,6 +260,61 @@ void main() {
     // themselves are single digits, so this is unambiguous.
     expect(find.text('12'), findsOneWidget);
     expect(client.pressedKeys, containsAllInOrder(['1', '2']));
+  });
+
+  group('d-pad button', () {
+    testWidgets('replaces Touchpad only while the touchpad stands in for the d-pad', (
+      tester,
+    ) async {
+      final prefs = await _freshPrefs();
+      final client = FakeWebOsClient(prefs);
+      await _pumpMainScreen(tester, prefs: prefs, client: client);
+      expect(find.text('Touchpad'), findsOneWidget);
+      expect(find.text('D-pad'), findsNothing);
+    });
+
+    testWidgets('opens a panel whose keys send through the normal path', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      final prefs = await _freshPrefs();
+      await prefs.setPadInsteadOfDpad(true);
+      final client = FakeWebOsClient(prefs);
+      await _pumpMainScreen(tester, prefs: prefs, client: client);
+      expect(find.text('Touchpad'), findsNothing);
+
+      await tester.tap(find.bySemanticsLabel('D-pad').first);
+      await tester.pump();
+      expect(find.byType(DpadPage), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Up'));
+      await tester.pump();
+      await tester.tap(find.text('OK'));
+      await tester.pump();
+      expect(client.pressedKeys, containsAllInOrder(['UP', 'ENTER']));
+
+      await tester.tap(find.bySemanticsLabel('Back to Remote'));
+      await tester.pump();
+      expect(find.byType(DpadPage), findsNothing);
+      handle.dispose();
+    });
+
+    testWidgets('system Back closes the panel before leaving the app', (
+      tester,
+    ) async {
+      final prefs = await _freshPrefs();
+      await prefs.setPadInsteadOfDpad(true);
+      final client = FakeWebOsClient(prefs);
+      await _pumpMainScreen(tester, prefs: prefs, client: client);
+
+      await tester.tap(find.bySemanticsLabel('D-pad').first);
+      await tester.pump();
+      expect(find.byType(DpadPage), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(find.byType(DpadPage), findsNothing);
+    });
   });
 
   testWidgets('colour row opens on tap and closes on an outside tap', (

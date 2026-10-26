@@ -29,6 +29,7 @@ import 'widgets/dpad.dart';
 import 'widgets/fill_viewport_page.dart';
 import 'widgets/keyboard_sheet.dart';
 import 'widgets/level_pill.dart';
+import 'widgets/dpad_page.dart';
 import 'widgets/numpad_page.dart';
 import 'widgets/shortcuts_row.dart';
 import 'widgets/touchpad_overlay.dart';
@@ -71,6 +72,7 @@ class _MainScreenState extends State<MainScreen>
   final GlobalKey _powerKey = GlobalKey();
   final GlobalKey _statusDotKey = GlobalKey();
   final GlobalKey _touchpadKey = GlobalKey();
+  final GlobalKey _dpadKey = GlobalKey();
   final GlobalKey _keyboardKey = GlobalKey();
   final GlobalKey _volumePillKey = GlobalKey();
   final GlobalKey _mediaKey = GlobalKey();
@@ -86,6 +88,7 @@ class _MainScreenState extends State<MainScreen>
   StreamSubscription<bool>? _wakeHintSub;
   bool _wakeHintShowing = false;
   bool _numpadOpen = false;
+  bool _dpadOpen = false;
   _SlideRow _slideRow = _SlideRow.none;
   bool _slideRowJustDismissed = false;
   bool _hardwareKeysHooked = false;
@@ -237,12 +240,20 @@ class _MainScreenState extends State<MainScreen>
           : 'Turns the TV on from standby over the network. '
                 'The dot in the corner shows whether the TV is on.',
     ),
-    TourStep(
-      [_touchpadKey],
-      'Touchpad',
-      'Tap and drag straight from this button to move the pointer. Hold it for a moment to lock the '
-          'touchpad open; Back closes it.',
-    ),
+    if (_controller.padInsteadOfDpad)
+      TourStep(
+        [_dpadKey],
+        'D-pad',
+        'The touchpad stands in for the d-pad here. This opens the arrows and OK in their own panel; '
+            'Back closes it.',
+      )
+    else
+      TourStep(
+        [_touchpadKey],
+        'Touchpad',
+        'Tap and drag straight from this button to move the pointer. Hold it for a moment to lock the '
+            'touchpad open; Back closes it.',
+      ),
     TourStep(
       [_keyboardKey],
       'Keyboard',
@@ -280,7 +291,12 @@ class _MainScreenState extends State<MainScreen>
       _tourRunning = false;
       return;
     }
-    if (_numpadOpen) setState(() => _numpadOpen = false);
+    if (_numpadOpen || _dpadOpen) {
+      setState(() {
+        _numpadOpen = false;
+        _dpadOpen = false;
+      });
+    }
     final completed = await showSpotlightTour(
       context,
       _tourSteps,
@@ -320,6 +336,9 @@ class _MainScreenState extends State<MainScreen>
     }
     await _controller.onResume();
     if (!mounted) return;
+    // Settings is one tap away from the panel, and the panel only exists
+    // while the touchpad replaces the d-pad
+    if (_dpadOpen && !_controller.padInsteadOfDpad) setState(() => _dpadOpen = false);
     await _syncWakelock();
     if (!mounted) return;
     await _maybeStartTour();
@@ -514,7 +533,7 @@ class _MainScreenState extends State<MainScreen>
       builder: (context, _) {
         // Spec §12 onBackPressed: locked touchpad takes priority over the
         // numpad page, otherwise fall through to the default (app exit).
-        final interceptBack = _touchpad.isLocked || _numpadOpen;
+        final interceptBack = _touchpad.isLocked || _numpadOpen || _dpadOpen;
         return PopScope(
           canPop: !interceptBack,
           onPopInvokedWithResult: (didPop, result) {
@@ -523,6 +542,8 @@ class _MainScreenState extends State<MainScreen>
               _touchpad.exitTapped();
             } else if (_numpadOpen) {
               setState(() => _numpadOpen = false);
+            } else if (_dpadOpen) {
+              setState(() => _dpadOpen = false);
             }
           },
           child: Scaffold(
@@ -547,6 +568,12 @@ class _MainScreenState extends State<MainScreen>
                                       controller: _controller,
                                       onClose: () =>
                                           setState(() => _numpadOpen = false),
+                                    )
+                                  : _dpadOpen
+                                  ? DpadPage(
+                                      controller: _controller,
+                                      onClose: () =>
+                                          setState(() => _dpadOpen = false),
                                     )
                                   : _buildMainColumn(theme, dims),
                             ),
@@ -708,17 +735,33 @@ class _MainScreenState extends State<MainScreen>
           child: const AppIcon('ic_power', size: 24),
         ),
         const SizedBox(width: 28),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TouchpadButton(key: _touchpadKey, controller: _touchpad),
-            const SizedBox(height: 5),
-            Text(
-              'Touchpad',
-              style: TextStyle(fontSize: 11, color: theme.secondaryText),
-            ),
-          ],
-        ),
+        if (_controller.padInsteadOfDpad)
+          CircleButton(
+            circleKey: _dpadKey,
+            size: 72,
+            color: theme.circleBtnBg,
+            label: 'D-pad',
+            labelColor: theme.secondaryText,
+            labelTopMargin: 5,
+            semanticLabel: 'D-pad',
+            onTap: () {
+              Haptics.light();
+              setState(() => _dpadOpen = true);
+            },
+            child: AppIcon('ic_dpad', size: 28, color: theme.circleBtnIconTint),
+          )
+        else
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TouchpadButton(key: _touchpadKey, controller: _touchpad),
+              const SizedBox(height: 5),
+              Text(
+                'Touchpad',
+                style: TextStyle(fontSize: 11, color: theme.secondaryText),
+              ),
+            ],
+          ),
         const SizedBox(width: 28),
         CircleButton(
           circleKey: _keyboardKey,
