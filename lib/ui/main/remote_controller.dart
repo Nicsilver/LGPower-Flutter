@@ -42,6 +42,7 @@ class RemoteController extends ChangeNotifier {
   bool currentMuted = false;
   int? currentBrightness;
   RightPill rightPill = RightPill.brightness;
+  bool padInsteadOfDpad = false;
   List<TvApp> shortcuts = const [];
 
   /// The active TV's name, shown as the remote's title.
@@ -112,6 +113,7 @@ class RemoteController extends ChangeNotifier {
     TvStore.syncFromLive(prefs);
     tvName = TvStore.activeName(prefs);
     rightPill = RightPill.get(prefs);
+    padInsteadOfDpad = prefs.padInsteadOfDpad;
     shortcuts = client.loadShortcuts();
     if (prefs.lastVolume >= 0) {
       setVolumeState(prefs.lastVolume, prefs.lastMuted);

@@ -132,6 +132,27 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(h.frames, ['click']);
     });
+
+    // The first finger up leaves one on the glass; lifting that one ends the
+    // scroll, it is not a tap.
+    testWidgets('lifting the fingers after a two-finger scroll does not click', (tester) async {
+      final h = await _pumpLockedPad(tester);
+      final a = await tester.startGesture(const Offset(200, 600), pointer: 1);
+      final b = await tester.startGesture(const Offset(260, 600), pointer: 2);
+      for (var i = 1; i <= 5; i++) {
+        await a.moveBy(const Offset(0, 20), timeStamp: _ms(17 * i));
+        await b.moveBy(const Offset(0, 20), timeStamp: _ms(17 * i));
+      }
+      await a.up();
+      await b.up();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(h.frames.where((f) => f.startsWith('scroll:')), isNotEmpty);
+      expect(h.frames, isNot(contains('click')));
+
+      await tester.tapAt(const Offset(200, 600));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(h.frames.where((f) => f == 'click'), hasLength(1));
+    });
   });
 
   group('move batching', () {
@@ -191,6 +212,75 @@ void main() {
       await g.up();
       expect(h.moves.fold<int>(0, (a, m) => a + m.$1), 46);
       expect(h.moves.length, greaterThan(5));
+    });
+  });
+
+  group('pad in place of the d-pad', () {
+    // Not locked, not opened from the button: the same gesture code runs on a
+    // widget in the remote's scrolling page.
+    Future<(_Harness, ScrollController)> pumpEmbedded(WidgetTester tester) async {
+      final h = await _pumpPad(tester, lock: false);
+      final scroll = ScrollController();
+      addTearDown(scroll.dispose);
+      await tester.runAsync(() async {
+        final themeController = AppThemeController(await ThemeManager.loadTheme('dark'));
+        await tester.pumpWidget(
+          MaterialApp(
+            home: AppTheme(
+              controller: themeController,
+              child: Scaffold(
+                body: SingleChildScrollView(
+                  controller: scroll,
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 100),
+                      TouchpadPad(controller: h.controller, size: 200),
+                      const SizedBox(height: 3000),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      });
+      return (h, scroll);
+    }
+
+    testWidgets('a tap clicks once', (tester) async {
+      final (h, _) = await pumpEmbedded(tester);
+      await tester.tap(find.byType(TouchpadPad));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(h.frames, ['click']);
+    });
+
+    testWidgets('a vertical drag moves the cursor and leaves the page where it is', (tester) async {
+      final (h, scroll) = await pumpEmbedded(tester);
+      final g = await tester.startGesture(tester.getCenter(find.byType(TouchpadPad)));
+      await g.moveBy(const Offset(0, 20), timeStamp: _ms(0));
+      await g.moveBy(const Offset(0, 10), timeStamp: _ms(17));
+      await g.up();
+      await tester.pump();
+      expect(scroll.offset, 0);
+      expect(h.moves.fold<int>(0, (a, m) => a + m.$2), 90);
+      expect(h.frames.where((f) => !f.startsWith('move:')), isEmpty);
+    });
+
+    testWidgets('two fingers scroll the TV', (tester) async {
+      final (h, _) = await pumpEmbedded(tester);
+      final c = tester.getCenter(find.byType(TouchpadPad));
+      final a = await tester.startGesture(c, pointer: 1);
+      final b = await tester.startGesture(c + const Offset(40, 0), pointer: 2);
+      for (var i = 1; i <= 5; i++) {
+        await a.moveBy(const Offset(0, 20), timeStamp: _ms(17 * i));
+        await b.moveBy(const Offset(0, 20), timeStamp: _ms(17 * i));
+      }
+      await a.up();
+      await b.up();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(h.frames.where((f) => f.startsWith('scroll:')), isNotEmpty);
+      expect(h.moves, isEmpty);
+      expect(h.frames, isNot(contains('click')));
     });
   });
 

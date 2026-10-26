@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart' show EagerGestureRecognizer;
 import 'package:flutter/material.dart';
 
 import '../../../core/haptics.dart';
@@ -59,9 +60,13 @@ class TouchpadController extends ChangeNotifier {
   Timer? _tailFlush;
   bool _buttonDragging = false;
   bool _disposed = false;
+  int get padPointerCount => _pointers.length;
   double _dragTotalDist = 0;
   bool _overlayDragging = false;
   bool _scrolling = false;
+  // Stays set until every finger is up: the fingers of a scroll leave one at
+  // a time, and the last one up must not read as a tap.
+  bool _hadSecondFinger = false;
   double _lastScrollY = 0;
   double _scrollCarry = 0;
 
@@ -215,6 +220,7 @@ class TouchpadController extends ChangeNotifier {
     reveal.value = 0;
     _pointers.clear();
     _scrolling = false;
+    _hadSecondFinger = false;
     _overlayDragging = false;
     _resetMoves();
     notifyListeners();
@@ -224,17 +230,35 @@ class TouchpadController extends ChangeNotifier {
 
   void overlayPointerDown(int id, Offset global) {
     if (!isLocked) return;
+    padPointerDown(id, global);
+  }
+
+  void overlayPointerMove(int id, Offset global, Duration timeStamp) {
+    if (!isLocked) return;
+    padPointerMove(id, global, timeStamp);
+  }
+
+  void overlayPointerUp(int id) {
+    if (!isLocked) return;
+    padPointerUp(id);
+  }
+
+  // The gesture handling itself, shared by the locked overlay and the pad
+  // that replaces the d-pad.
+  void padPointerDown(int id, Offset global) {
     _pointers[id] = global;
     if (_pointers.length == 1) {
       _dragTotalDist = 0;
       _moveAccumulator = 0;
       _overlayDragging = false;
       _scrolling = false;
+      _hadSecondFinger = false;
       _resetMoves();
       _stopPacing();
     } else if (_pointers.length == 2) {
       flushMoves();
       _scrolling = true;
+      _hadSecondFinger = true;
       _overlayDragging = false;
       final ys = _pointers.values.map((o) => o.dy).toList();
       _lastScrollY = (ys[0] + ys[1]) / 2 * _dpr;
@@ -242,8 +266,7 @@ class TouchpadController extends ChangeNotifier {
     }
   }
 
-  void overlayPointerMove(int id, Offset global, Duration timeStamp) {
-    if (!isLocked) return;
+  void padPointerMove(int id, Offset global, Duration timeStamp) {
     final prev = _pointers[id];
     _pointers[id] = global;
     if (_scrolling && _pointers.length >= 2) {
@@ -278,14 +301,13 @@ class TouchpadController extends ChangeNotifier {
     if (_overlayDragging) _queueMove(dx * _dpr, dy * _dpr, timeStamp);
   }
 
-  void overlayPointerUp(int id) {
-    if (!isLocked) return;
+  void padPointerUp(int id) {
     final wasSingle = _pointers.length == 1;
     flushMoves();
     _pointers.remove(id);
     if (_pointers.isEmpty) {
       _stopPacing();
-      if (wasSingle && !_overlayDragging && !_scrolling) {
+      if (wasSingle && !_overlayDragging && !_hadSecondFinger) {
         Haptics.light();
         client.pointerClick();
       }
@@ -350,6 +372,58 @@ class TouchpadButton extends StatelessWidget {
           button: true,
           label: 'Touchpad',
           child: AppIcon('ic_touchpad', size: 28, color: theme.circleBtnIconTint),
+        ),
+      ),
+    );
+  }
+}
+
+/// The touchpad that stands in for the d-pad when the setting is on. It feeds
+/// the same gesture code as the locked overlay, so moves, taps, scrolls and
+/// haptics are identical.
+class TouchpadPad extends StatelessWidget {
+  const TouchpadPad({super.key, required this.controller, required this.size});
+
+  final TouchpadController controller;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = AppTheme.of(context);
+    // The remote scrolls vertically; an eager recognizer wins every pointer
+    // at once so a drag on the pad moves the cursor instead of the page.
+    return RawGestureDetector(
+      behavior: HitTestBehavior.opaque,
+      gestures: {
+        EagerGestureRecognizer: GestureRecognizerFactoryWithHandlers<EagerGestureRecognizer>(
+          EagerGestureRecognizer.new,
+          (_) {},
+        ),
+      },
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (e) {
+          if (controller.padPointerCount == 0) controller.client.warmPointer();
+          controller.padPointerDown(e.pointer, e.position);
+        },
+        onPointerMove: (e) => controller.padPointerMove(e.pointer, e.position, e.timeStamp),
+        onPointerUp: (e) => controller.padPointerUp(e.pointer),
+        onPointerCancel: (e) => controller.padPointerUp(e.pointer),
+        child: Semantics(
+          label: 'Touchpad',
+          child: Container(
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: theme.dpadRingBg,
+              borderRadius: BorderRadius.circular(28),
+            ),
+            child: Opacity(
+              opacity: 0.45,
+              child: AppIcon('ic_touchpad', size: 28, color: theme.secondaryText),
+            ),
+          ),
         ),
       ),
     );
