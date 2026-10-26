@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../net/keyboard.dart';
+import '../../../net/typing_support.dart';
+import '../../../net/ssap_messages.dart' show isSsapPermissionError;
 import '../../../net/webos_client.dart';
 import '../../../theme/theme_manager.dart';
 import '../../widgets/app_icon.dart';
@@ -39,10 +41,21 @@ class _KeyboardSheetState extends State<KeyboardSheet> {
   KeyboardFocus _focus = KeyboardFocus.unknown;
   String? _error;
   bool _sending = false;
+  // Once the TV has refused typing, Send opens the text as a web search on
+  // the TV instead.
+  late bool _searchOnly;
 
   @override
   void initState() {
     super.initState();
+    _searchOnly = TypingSupport.isRefused(widget.controller.client.prefs);
+    // A firmware update lifts the refusal; the version is read now, so the sheet
+    // leaves search mode on its own when the TV reports a new one.
+    unawaited(widget.controller.client.refreshSoftwareVersion().then((_) {
+      if (mounted && _searchOnly && !TypingSupport.isRefused(widget.controller.client.prefs)) {
+        setState(() => _searchOnly = false);
+      }
+    }));
     _watch = widget.controller.client.watchKeyboard((focus) {
       if (mounted && focus != _focus) setState(() => _focus = focus);
     });
@@ -69,9 +82,33 @@ class _KeyboardSheetState extends State<KeyboardSheet> {
       _error = null;
     });
     final controller = widget.controller;
-    final result = await controller.sendCommandForResult(() => controller.client.sendText(text));
+    final client = controller.client;
+    final search = _searchOnly;
+    final result = await controller.sendCommandForResult(() async {
+      if (search) {
+        return switch (await client.openInBrowser(text)) {
+          Success() => const Success(),
+          NeedsPairing() => const NeedsPairing(),
+          CmdError(:final message) => CmdError(
+              isSsapPermissionError(message) ? keyboardLinkLine : message),
+        };
+      }
+      return switch (await client.typeText(text)) {
+        Typed() => const Success(),
+        TypeNeedsPairing() => const NeedsPairing(),
+        TypeRefused() => const CmdRefused(),
+        TypeFailed(:final message) => CmdError(message),
+      };
+    });
     if (!mounted) return;
     switch (result) {
+      case CmdRefused():
+        await TypingSupport.markRefused(client.prefs);
+        if (!mounted) return;
+        setState(() {
+          _sending = false;
+          _searchOnly = true;
+        });
       case CmdError(:final message):
         setState(() {
           _sending = false;
@@ -85,7 +122,12 @@ class _KeyboardSheetState extends State<KeyboardSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = AppTheme.of(context);
-    final note = _error ?? (_focus == KeyboardFocus.none ? keyboardNoFocusHint : null);
+    final note = _error ??
+        (_searchOnly
+            ? keyboardSearchOnlyLine
+            : _focus == KeyboardFocus.none
+                ? keyboardNoFocusHint
+                : null);
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Padding(

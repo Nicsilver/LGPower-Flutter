@@ -18,6 +18,8 @@ import 'conn_report.dart';
 import 'keyboard.dart';
 import 'pointer_session.dart';
 import 'resume_check.dart';
+import 'ssap_messages.dart' show isSsapPermissionError;
+import 'typing_support.dart';
 import 'wol.dart' as wol;
 
 const String _powerStateUri =
@@ -35,6 +37,35 @@ class Success extends Result {
 
 class NeedsPairing extends Result {
   const NeedsPairing();
+}
+
+/// Typing refused with a permission error after every fallback; the keyboard
+/// sheet reads it to switch to the web search.
+class CmdRefused extends CmdError {
+  const CmdRefused() : super('401 insufficient permissions');
+}
+
+sealed class TypeResult {
+  const TypeResult();
+}
+
+class Typed extends TypeResult {
+  const Typed();
+}
+
+class TypeNeedsPairing extends TypeResult {
+  const TypeNeedsPairing();
+}
+
+/// The TV answered the typing call with a permission error and no fallback
+/// got text in.
+class TypeRefused extends TypeResult {
+  const TypeRefused();
+}
+
+class TypeFailed extends TypeResult {
+  const TypeFailed(this.message);
+  final String message;
 }
 
 class CmdError extends Result {
@@ -842,6 +873,86 @@ class WebOsClient {
         payload: {'text': text, 'replace': false},
       );
 
+  /// Types into the TV's focused field. A permission refusal is retried
+  /// through the notification route when its effect can be seen.
+  Future<TypeResult> typeText(String text) async {
+    switch (await sendText(text)) {
+      case Success():
+        return const Typed();
+      case NeedsPairing():
+        return const TypeNeedsPairing();
+      case CmdError(:final message):
+        if (!isSsapPermissionError(message)) return TypeFailed(message);
+        return await _typeThroughNotification(text) ? const Typed() : const TypeRefused();
+    }
+  }
+
+  // The notification service runs the call as itself, which is how settings
+  // writes get past the same 401 on webOS 26. Whether the IME honours it is
+  // unknown, so it only counts when the keyboard subscription shows the text
+  // length grow; without that the answer is "no" rather than a guess.
+  Future<bool> _typeThroughNotification(String text) async {
+    final before = _kbdTextLength;
+    if (_kbdFocus != KeyboardFocus.focused || before < 0) return false;
+    final sent = await _lunaRequest('com.webos.service.ime/insertText', {'text': text, 'replace': false});
+    if (sent is! Success) return false;
+    final until = DateTime.now().add(const Duration(seconds: 2));
+    while (DateTime.now().isBefore(until)) {
+      if (_kbdTextLength > before) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    return false;
+  }
+
+  /// Opens typed text on the TV browser: a link as typed, anything else as a
+  /// web search.
+  Future<Result> openInBrowser(String text) => _execute(
+        'ssap://system.launcher/open',
+        payload: {'target': TypingSupport.browserTarget(text)},
+      );
+
+  KeyboardFocus _kbdFocus = KeyboardFocus.unknown;
+  int _kbdTextLength = -1;
+
+  void _noteKeyboardPayload(Map<String, dynamic> payload) {
+    final focus = parseKeyboardFocus(payload);
+    if (focus != KeyboardFocus.unknown) _kbdFocus = focus;
+    if (focus == KeyboardFocus.none) _kbdTextLength = -1;
+    final length = keyboardTextLengthOf(payload);
+    if (length != null) _kbdTextLength = length;
+  }
+
+  CommandSession? _versionReadFor;
+
+  /// Reads the TV's software version once per connection and stores it for
+  /// the active TV. Run when the keyboard opens, so a connection that never
+  /// types sends nothing extra.
+  Future<void> refreshSoftwareVersion() async {
+    if (tvIp.isEmpty) return;
+    final session = _commandSession();
+    if (identical(_versionReadFor, session)) return;
+    _versionReadFor = session;
+    try {
+      await session.awaitReady(timeout: const Duration(seconds: 10));
+      if (session.state != CmdState.ready) return;
+      Future<Map<String, dynamic>?> payloadOf(String uri, Map<String, dynamic> payload) async {
+        final reply = await session.send(uri, payload: payload, timeoutSecs: 4);
+        return reply is CmdReplyOk ? reply.payload : null;
+      }
+
+      // webOS 26 refuses the first with a permission error, so the system
+      // property service gets a turn.
+      final version = TypingSupport.versionOf(
+              await payloadOf('ssap://com.webos.service.update/getCurrentSWInformation', {})) ??
+          TypingSupport.versionOf(await payloadOf(
+              'ssap://com.webos.service.tv.systemproperty/getSystemInfo',
+              {'keys': ['firmwareVersion', 'sdkVersion']}));
+      if (version != null && session.ip == tvIp) await TypingSupport.noteVersion(prefs, version);
+    } catch (_) {
+      // A missing version only means the refusal mark ages out instead.
+    }
+  }
+
   /// Holds the TV's remote-keyboard subscription on the shared command
   /// session and reports whether a text field has focus. Returns the cancel
   /// function; a session that is not ready in time just never reports.
@@ -852,12 +963,37 @@ class WebOsClient {
     final id = session.subscribe(
       'ssap://com.webos.service.ime/registerRemoteKeyboard',
       (payload) {
-        if (payload != null) listener(parseKeyboardFocus(payload));
+        if (payload != null) {
+          _noteKeyboardPayload(payload);
+          listener(parseKeyboardFocus(payload));
+        }
       },
     );
     return () {
+      _kbdFocus = KeyboardFocus.unknown;
+      _kbdTextLength = -1;
       if (id != null) session.unsubscribe(id);
     };
+  }
+
+  /// The notification route used for settings writes, aimed at insertText;
+  /// both raw replies for the keyboard test.
+  Future<(CmdReply, CmdReply?)> rawNotificationInsert(String text) async {
+    const lunaUri = 'luna://com.webos.service.ime/insertText';
+    final params = {'text': text, 'replace': false};
+    final session = _commandSession();
+    final alert = await session.send('ssap://system.notifications/createAlert', payload: {
+      'message': ' ',
+      'buttons': [
+        {'label': '', 'onClick': lunaUri, 'params': params},
+      ],
+      'onclose': {'uri': lunaUri, 'params': params},
+      'onfail': {'uri': lunaUri, 'params': params},
+    });
+    final alertId = alert is CmdReplyOk ? alert.payload['alertId'] as String? : null;
+    if (alertId == null || alertId.isEmpty) return (alert, null);
+    final close = await session.send('ssap://system.notifications/closeAlert', payload: {'alertId': alertId});
+    return (alert, close);
   }
 
   /// Timed probes for the connection report. Drops both shared sockets first so
