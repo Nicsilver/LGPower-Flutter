@@ -36,6 +36,16 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(54, '1.41.0', '2026-10-26', [
+      'Service menu over Wi-Fi, so it works on any phone',
+      'The IR service menu has its own page',
+      'New option: touchpad instead of the D-pad, with a D-pad button to swap the arrows back in',
+      'Buttons show a ripple when pressed, and you can tap anywhere on a settings row to toggle it',
+      'Keyboard: clearer messages, and on newer TVs that block typing, Send searches on the TV instead',
+      'Touchpad moves the full distance and no longer jumps or freezes when the connection hiccups',
+      'Faster, smoother d-pad and touchpad on slow TVs or Wi-Fi; the first press after coming back to the app is near-instant',
+      'Settings > About > Copy connection report',
+    ]),
     Release(53, '1.40.7', '2026-10-16', [
       'The remote fits on phones around 400 points wide instead of cutting off the right-hand buttons',
       'Removed a stray dot on the channel-up button',
