@@ -132,6 +132,27 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(h.frames, ['click']);
     });
+
+    // The first finger up leaves one on the glass; lifting that one ends the
+    // scroll, it is not a tap.
+    testWidgets('lifting the fingers after a two-finger scroll does not click', (tester) async {
+      final h = await _pumpLockedPad(tester);
+      final a = await tester.startGesture(const Offset(200, 600), pointer: 1);
+      final b = await tester.startGesture(const Offset(260, 600), pointer: 2);
+      for (var i = 1; i <= 5; i++) {
+        await a.moveBy(const Offset(0, 20), timeStamp: _ms(17 * i));
+        await b.moveBy(const Offset(0, 20), timeStamp: _ms(17 * i));
+      }
+      await a.up();
+      await b.up();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(h.frames.where((f) => f.startsWith('scroll:')), isNotEmpty);
+      expect(h.frames, isNot(contains('click')));
+
+      await tester.tapAt(const Offset(200, 600));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(h.frames.where((f) => f == 'click'), hasLength(1));
+    });
   });
 
   group('move batching', () {
@@ -256,8 +277,10 @@ void main() {
       }
       await a.up();
       await b.up();
+      await tester.pump(const Duration(milliseconds: 50));
       expect(h.frames.where((f) => f.startsWith('scroll:')), isNotEmpty);
       expect(h.moves, isEmpty);
+      expect(h.frames, isNot(contains('click')));
     });
   });
 

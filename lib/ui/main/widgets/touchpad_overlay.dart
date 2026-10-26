@@ -64,6 +64,9 @@ class TouchpadController extends ChangeNotifier {
   double _dragTotalDist = 0;
   bool _overlayDragging = false;
   bool _scrolling = false;
+  // Stays set until every finger is up: the fingers of a scroll leave one at
+  // a time, and the last one up must not read as a tap.
+  bool _hadSecondFinger = false;
   double _lastScrollY = 0;
   double _scrollCarry = 0;
 
@@ -217,6 +220,7 @@ class TouchpadController extends ChangeNotifier {
     reveal.value = 0;
     _pointers.clear();
     _scrolling = false;
+    _hadSecondFinger = false;
     _overlayDragging = false;
     _resetMoves();
     notifyListeners();
@@ -248,11 +252,13 @@ class TouchpadController extends ChangeNotifier {
       _moveAccumulator = 0;
       _overlayDragging = false;
       _scrolling = false;
+      _hadSecondFinger = false;
       _resetMoves();
       _stopPacing();
     } else if (_pointers.length == 2) {
       flushMoves();
       _scrolling = true;
+      _hadSecondFinger = true;
       _overlayDragging = false;
       final ys = _pointers.values.map((o) => o.dy).toList();
       _lastScrollY = (ys[0] + ys[1]) / 2 * _dpr;
@@ -301,7 +307,7 @@ class TouchpadController extends ChangeNotifier {
     _pointers.remove(id);
     if (_pointers.isEmpty) {
       _stopPacing();
-      if (wasSingle && !_overlayDragging && !_scrolling) {
+      if (wasSingle && !_overlayDragging && !_hadSecondFinger) {
         Haptics.light();
         client.pointerClick();
       }
