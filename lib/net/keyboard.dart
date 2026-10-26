@@ -2,7 +2,7 @@ import 'ssap_messages.dart';
 
 const String keyboardPermissionLine = "This TV doesn't allow typing from this app";
 const String keyboardSearchOnlyLine =
-    'This TV blocks typing from apps. Send searches the web on the TV instead';
+    'Newer LG TVs (webOS 25 and 26) block typing from apps. Send searches the web on the TV instead.';
 const String keyboardLinkLine = "This TV won't open links from this app";
 const String keyboardNoFocusHint = 'Select a text field on the TV first';
 
