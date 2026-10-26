@@ -46,6 +46,41 @@ void main() {
   installFakePathProvider();
 
   group('CONTROLS switches', () {
+    testWidgets('tapping a row title or empty space flips the switch once', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final (prefs, client, controller) = await _harness();
+      await tester.pumpWidget(_app(client, controller));
+      await tester.pump();
+
+      bool padValue() =>
+          (tester.widget(find.byType(AppSwitch).at(1)) as AppSwitch).value;
+
+      expect(padValue(), isFalse);
+      await tester.tap(find.text('Touchpad instead of D-pad'));
+      await tester.pump();
+      expect(padValue(), isTrue);
+      expect(prefs.padInsteadOfDpad, isTrue);
+
+      await tester.tap(find.text('Replaces the arrows with a pointer pad'));
+      await tester.pump();
+      expect(padValue(), isFalse);
+
+      await tester.tap(find.byType(AppSwitch).at(1));
+      await tester.pump();
+      expect(padValue(), isTrue);
+
+      final row = find.ancestor(
+        of: find.text('Channel buttons instead of brightness'),
+        matching: find.byType(InkWell),
+      );
+      final rect = tester.getRect(row);
+      await tester.tapAt(Offset(rect.left + rect.width * 0.62, rect.center.dy));
+      await tester.pump();
+      expect(RightPill.get(prefs), RightPill.channel);
+    });
+
     testWidgets(
       'the channel-buttons switch writes the right_pill pref immediately',
       (tester) async {

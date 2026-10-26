@@ -649,6 +649,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // The whole row is the touch target; AppSwitch gets no handler of its own so
+  // a tap on it reaches the row's InkWell once instead of toggling twice.
   Widget _switchRow(
     ThemeConfig theme,
     String label,
@@ -656,32 +658,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ValueChanged<bool> onChanged, {
     String? subtitle,
   }) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 52),
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: subtitle == null ? 0 : 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return MergeSemantics(
+      child: Semantics(
+        toggled: value,
+        child: InkWell(
+          onTap: () => onChanged(!value),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: subtitle == null ? 0 : 8),
+            child: Row(
               children: [
-                Text(
-                  label,
-                  style: TextStyle(fontSize: 15, color: theme.primaryText),
-                ),
-                if (subtitle != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      subtitle,
-                      style: TextStyle(fontSize: 12, color: theme.secondaryText),
-                    ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(fontSize: 15, color: theme.primaryText),
+                      ),
+                      if (subtitle != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            subtitle,
+                            style: TextStyle(fontSize: 12, color: theme.secondaryText),
+                          ),
+                        ),
+                    ],
                   ),
+                ),
+                AppSwitch(value: value),
               ],
             ),
           ),
-          AppSwitch(value: value, onChanged: onChanged),
-        ],
+        ),
       ),
     );
   }
