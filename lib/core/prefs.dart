@@ -55,6 +55,11 @@ class Prefs {
   Future<void> setKeepScreenOn(bool value) =>
       _sp.setBool('keep_screen_on', value);
 
+  /// Shows a touchpad where the d-pad normally sits.
+  bool get padInsteadOfDpad => _sp.getBool('touchpad_instead_of_dpad') ?? false;
+  Future<void> setPadInsteadOfDpad(bool value) =>
+      _sp.setBool('touchpad_instead_of_dpad', value);
+
   int get lastVolume => _sp.getInt('last_volume') ?? -1;
   Future<void> setLastVolume(int value) => _sp.setInt('last_volume', value);
 

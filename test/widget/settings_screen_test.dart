@@ -60,6 +60,21 @@ void main() {
       },
     );
 
+    testWidgets('the touchpad-instead-of-D-pad switch is off by default and writes its pref',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final (prefs, client, controller) = await _harness();
+      await tester.pumpWidget(_app(client, controller));
+      await tester.pump();
+
+      expect(find.text('Touchpad instead of D-pad'), findsOneWidget);
+      expect(prefs.padInsteadOfDpad, isFalse);
+      await tester.tap(find.byType(AppSwitch).at(1));
+      await tester.pump();
+
+      expect(prefs.padInsteadOfDpad, isTrue);
+    });
+
     testWidgets('a pre-1.35 channel switch pref still reads as channel', (
       tester,
     ) async {

@@ -921,7 +921,9 @@ class _MainScreenState extends State<MainScreen>
           onDragEnd: _controller.volumeDragEnd,
         ),
         SizedBox(width: dims.pillGap),
-        Dpad(controller: _controller, size: dims.dpadSize, okSize: dims.okSize),
+        _controller.padInsteadOfDpad
+            ? TouchpadPad(controller: _touchpad, size: dims.dpadSize)
+            : Dpad(controller: _controller, size: dims.dpadSize, okSize: dims.okSize),
         SizedBox(width: dims.pillGap),
         _controller.rightPill == RightPill.channel
             ? LevelPill(

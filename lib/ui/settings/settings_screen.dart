@@ -68,6 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _channelPill = false;
   bool _keepScreenOn = false;
+  bool _padInsteadOfDpad = false;
 
   List<TvApp> _apps = const [];
   List<TvApp> _selected = const [];
@@ -83,6 +84,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = widget.client.prefs;
     _channelPill = RightPill.get(prefs) == RightPill.channel;
     _keepScreenOn = prefs.keepScreenOn;
+    _padInsteadOfDpad = prefs.padInsteadOfDpad;
     _selected = widget.client.loadShortcuts();
     _apps = List.of(_selected);
     _loadVersion();
@@ -610,6 +612,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const RowDivider(),
         _switchRow(
           theme,
+          'Touchpad instead of D-pad',
+          _padInsteadOfDpad,
+          (v) {
+            setState(() => _padInsteadOfDpad = v);
+            unawaited(widget.client.prefs.setPadInsteadOfDpad(v));
+          },
+          subtitle: 'Replaces the arrows with a pointer pad',
+        ),
+        const RowDivider(),
+        _switchRow(
+          theme,
           'Keep screen on',
           _keepScreenOn,
           _onKeepScreenOnChanged,
@@ -631,17 +644,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ThemeConfig theme,
     String label,
     bool value,
-    ValueChanged<bool> onChanged,
-  ) {
+    ValueChanged<bool> onChanged, {
+    String? subtitle,
+  }) {
     return Container(
-      height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      constraints: const BoxConstraints(minHeight: 52),
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: subtitle == null ? 0 : 8),
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              label,
-              style: TextStyle(fontSize: 15, color: theme.primaryText),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 15, color: theme.primaryText),
+                ),
+                if (subtitle != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      subtitle,
+                      style: TextStyle(fontSize: 12, color: theme.secondaryText),
+                    ),
+                  ),
+              ],
             ),
           ),
           AppSwitch(value: value, onChanged: onChanged),
