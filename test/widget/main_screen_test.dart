@@ -13,9 +13,10 @@ import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/theme/theme_manager.dart';
 import 'package:lgpower/ui/main/main_screen.dart';
 import 'package:lgpower/ui/main/remote_controller.dart';
-import 'package:lgpower/ui/main/widgets/dpad_page.dart';
+import 'package:lgpower/ui/main/widgets/dpad.dart';
 import 'package:lgpower/ui/main/widgets/level_pill.dart';
 import 'package:lgpower/ui/main/widgets/numpad_page.dart';
+import 'package:lgpower/ui/main/widgets/touchpad_overlay.dart';
 
 const _packageInfoChannel = MethodChannel(
   'dev.fluttercommunity.plus/package_info',
@@ -273,7 +274,7 @@ void main() {
       expect(find.text('D-pad'), findsNothing);
     });
 
-    testWidgets('opens a panel whose keys send through the normal path', (
+    testWidgets('swaps the ring in; its keys send and do not swap back', (
       tester,
     ) async {
       final handle = tester.ensureSemantics();
@@ -281,39 +282,55 @@ void main() {
       await prefs.setPadInsteadOfDpad(true);
       final client = FakeWebOsClient(prefs);
       await _pumpMainScreen(tester, prefs: prefs, client: client);
-      expect(find.text('Touchpad'), findsNothing);
+      expect(find.byType(Dpad), findsNothing);
+      expect(find.byType(TouchpadPad), findsOneWidget);
 
       await tester.tap(find.bySemanticsLabel('D-pad').first);
       await tester.pump();
-      expect(find.byType(DpadPage), findsOneWidget);
+      expect(find.byType(Dpad), findsOneWidget);
+      expect(find.byType(TouchpadPad), findsNothing);
 
       await tester.tap(find.bySemanticsLabel('Up'));
       await tester.pump();
       await tester.tap(find.text('OK'));
       await tester.pump();
       expect(client.pressedKeys, containsAllInOrder(['UP', 'ENTER']));
-
-      await tester.tap(find.bySemanticsLabel('Back to Remote'));
-      await tester.pump();
-      expect(find.byType(DpadPage), findsNothing);
+      expect(find.byType(Dpad), findsOneWidget);
       handle.dispose();
     });
 
-    testWidgets('system Back closes the panel before leaving the app', (
+    testWidgets('an outside tap, another button or the D-pad button swaps back', (
       tester,
     ) async {
+      final handle = tester.ensureSemantics();
       final prefs = await _freshPrefs();
       await prefs.setPadInsteadOfDpad(true);
       final client = FakeWebOsClient(prefs);
       await _pumpMainScreen(tester, prefs: prefs, client: client);
 
+      Future<void> swapIn() async {
+        await tester.tap(find.bySemanticsLabel('D-pad').first);
+        await tester.pump();
+        expect(find.byType(Dpad), findsOneWidget);
+      }
+
+      await swapIn();
+      await tester.tapAt(const Offset(2, 300));
+      await tester.pump();
+      expect(find.byType(TouchpadPad), findsOneWidget);
+      expect(find.byType(Dpad), findsNothing);
+
+      await swapIn();
       await tester.tap(find.bySemanticsLabel('D-pad').first);
       await tester.pump();
-      expect(find.byType(DpadPage), findsOneWidget);
+      expect(find.byType(TouchpadPad), findsOneWidget);
+      expect(find.byType(Dpad), findsNothing);
 
-      await tester.binding.handlePopRoute();
+      await swapIn();
+      await tester.tap(find.bySemanticsLabel('Volume Up'));
       await tester.pump();
-      expect(find.byType(DpadPage), findsNothing);
+      expect(find.byType(TouchpadPad), findsOneWidget);
+      handle.dispose();
     });
   });
 
