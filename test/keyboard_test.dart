@@ -14,6 +14,7 @@ import 'package:lgpower/net/command_session.dart';
 import 'package:lgpower/net/keyboard.dart';
 import 'package:lgpower/net/keyboard_probe.dart';
 import 'package:lgpower/net/ssap_messages.dart';
+import 'package:lgpower/net/typing_support.dart';
 import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/net/ws_connect.dart';
 import 'package:lgpower/theme/theme_manager.dart';
@@ -37,6 +38,11 @@ class _Tv {
   final seenRequests = <Map<String, dynamic>>[];
   final unsubscribed = <Object?>[];
   List<Map<String, dynamic>> keyboardPushes = [];
+  final replies = <String, Map<String, dynamic> Function(Object? id)>{};
+  final _subs = <(WebSocket, Object?)>[];
+  // Sent to every keyboard subscriber when closeAlert arrives, like the TV
+  // running the alert's luna call.
+  Map<String, dynamic>? pushOnCloseAlert;
 
   Future<void> start() async {
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -53,6 +59,7 @@ class _Tv {
               'payload': {'client-key': 'secret-key'},
             }));
           case 'subscribe':
+            _subs.add((ws, id));
             for (final push in keyboardPushes) {
               ws.add(jsonEncode({...push, 'id': id}));
             }
@@ -60,9 +67,15 @@ class _Tv {
             unsubscribed.add(id);
           case 'request':
             seenRequests.add(msg);
-            final reply = msg['uri'] == 'ssap://com.webos.service.ime/insertText'
+            final uri = msg['uri'] as String?;
+            final reply = uri == 'ssap://com.webos.service.ime/insertText'
                 ? insertTextReply?.call(id)
-                : null;
+                : replies[uri]?.call(id);
+            if (uri == 'ssap://system.notifications/closeAlert' && pushOnCloseAlert != null) {
+              for (final (sub, subId) in _subs) {
+                sub.add(jsonEncode({...pushOnCloseAlert!, 'id': subId}));
+              }
+            }
             ws.add(jsonEncode(reply ??
                 {
                   'type': 'response',
@@ -77,6 +90,8 @@ class _Tv {
   Future<void> stop() => _server.close(force: true);
 
   SocketConnector get connector => (url) => WebSocket.connect('ws://127.0.0.1:${_server.port}');
+
+  WebOsClient client(Prefs prefs) => WebOsClient(prefs, commandSessionFactory: sessions);
 
   CommandSession Function(String, Prefs) get sessions =>
       (ip, p) => CommandSession(ip, p, connector: connector);
@@ -240,11 +255,17 @@ void main() {
       final session = tv.sessions('127.0.0.1', await _prefs());
       addTearDown(session.close);
       await session.awaitReady();
+      final prefs = await _prefs();
       final report = await KeyboardProbe(
         session,
         header: 'Keyboard test report',
+        prefs: prefs,
+        notificationInsert: (text) async => (const CmdReplyErr('401 insufficient permissions'), null),
         listenFor: const Duration(milliseconds: 400),
       ).run();
+      expect(report, contains('Typing verdict: the TV refused text'));
+      expect(TypingSupport.isRefused(prefs), isTrue);
+      expect(report, contains('through the notification route: alert ERROR 401'));
 
       for (final label in [
         'getSystemInfo: OK',
@@ -350,8 +371,164 @@ void main() {
     });
   });
 
+  group('typing support', () {
+    test('a refusal lasts three days, then the keyboard tries again', () async {
+      final prefs = await _prefs();
+      final t0 = DateTime(2026, 10, 26);
+      expect(TypingSupport.isRefused(prefs, now: t0), isFalse);
+      await TypingSupport.markRefused(prefs, now: t0);
+      expect(TypingSupport.isRefused(prefs, now: t0.add(const Duration(days: 2))), isTrue);
+      expect(TypingSupport.isRefused(prefs, now: t0.add(const Duration(days: 4))), isFalse);
+    });
+
+    test('a different software version lifts the refusal, the same one does not', () async {
+      final prefs = await _prefs();
+      await TypingSupport.noteVersion(prefs, 'webOS 04 40.43');
+      await TypingSupport.markRefused(prefs);
+      await TypingSupport.noteVersion(prefs, 'webOS 04 40.43');
+      expect(TypingSupport.isRefused(prefs), isTrue);
+      await TypingSupport.noteVersion(prefs, 'webOS 04 41.00');
+      expect(TypingSupport.isRefused(prefs), isFalse);
+      expect(TypingSupport.softwareVersion(prefs), 'webOS 04 41.00');
+    });
+
+    test('the first version ever seen does not clear a mark', () async {
+      final prefs = await _prefs();
+      await TypingSupport.markRefused(prefs);
+      await TypingSupport.noteVersion(prefs, 'webOS 04 40.43');
+      expect(TypingSupport.isRefused(prefs), isTrue);
+    });
+
+    test('links open as typed, everything else is a search', () {
+      expect(TypingSupport.browserTarget('https://example.com/a'), 'https://example.com/a');
+      expect(TypingSupport.browserTarget('example.com'), 'https://example.com');
+      expect(TypingSupport.browserTarget('cat videos'), 'https://www.google.com/search?q=cat+videos');
+      expect(TypingSupport.browserTarget(' planet '), 'https://www.google.com/search?q=planet');
+      expect(TypingSupport.browserTarget('3.14'), 'https://www.google.com/search?q=3.14');
+      expect(TypingSupport.browserTarget('javascript:alert(1)'), 'https://www.google.com/search?q=javascript%3Aalert%281%29');
+    });
+
+    test('the version comes from whatever the TV reports', () {
+      expect(
+        TypingSupport.versionOf({'product_name': 'webOSTV 24', 'major_ver': '4', 'minor_ver': '30'}),
+        'webOSTV 24 4 30',
+      );
+      expect(TypingSupport.versionOf({'firmwareVersion': '43.21.59'}), '43.21.59');
+      expect(TypingSupport.versionOf({'returnValue': true}), isNull);
+      expect(TypingSupport.versionOf(null), isNull);
+    });
+
+    test('text length is read only from a widget that reports it', () {
+      expect(keyboardTextLengthOf({'currentWidget': {'focus': true, 'surroundingTextLength': 3}}), 3);
+      expect(keyboardTextLengthOf({'currentWidget': {'focus': true, 'hiddenText': true}}), isNull);
+      expect(keyboardTextLengthOf(null), isNull);
+    });
+  });
+
+  group('typeText', () {
+    late _Tv tv;
+    setUp(() async {
+      tv = _Tv();
+      await tv.start();
+    });
+    tearDown(() => tv.stop());
+
+    const focusedPush = {
+      'type': 'response',
+      'payload': {
+        'returnValue': true,
+        'subscribed': true,
+        'currentWidget': {'focus': true, 'surroundingTextLength': 0},
+      },
+    };
+
+    void scriptAlert() {
+      tv.replies['ssap://system.notifications/createAlert'] =
+          (id) => {'type': 'response', 'id': id, 'payload': {'returnValue': true, 'alertId': 'a1'}};
+    }
+
+    test('plain typing is one insertText with a boolean replace and no fallback', () async {
+      final client = tv.client(await _prefs());
+      expect(await client.typeText('hi'), isA<Typed>());
+      final uris = [for (final r in tv.seenRequests) r['uri']];
+      expect(uris, isNot(contains('ssap://system.notifications/createAlert')));
+      final insert = tv.seenRequests.firstWhere((r) => r['uri'] == 'ssap://com.webos.service.ime/insertText');
+      expect(insert['payload'], {'text': 'hi', 'replace': false});
+    });
+
+    test('a refusal with no visible keyboard state is refused and tries nothing else', () async {
+      tv.insertTextReply = (id) => {..._frame401, 'id': id};
+      final client = tv.client(await _prefs());
+      expect(await client.typeText('hi'), isA<TypeRefused>());
+      expect([for (final r in tv.seenRequests) r['uri']], isNot(contains('ssap://system.notifications/createAlert')));
+    });
+
+    test('a refusal is retried through the notification route and counts when the text length grows', () async {
+      tv.insertTextReply = (id) => {..._frame401, 'id': id};
+      tv.keyboardPushes = [focusedPush];
+      scriptAlert();
+      tv.pushOnCloseAlert = {
+        'type': 'response',
+        'payload': {
+          'returnValue': true,
+          'currentWidget': {'focus': true, 'surroundingTextLength': 2},
+        },
+      };
+      final client = tv.client(await _prefs());
+      final cancel = await client.watchKeyboard((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(await client.typeText('hi'), isA<Typed>());
+      cancel();
+      final alert = tv.seenRequests.firstWhere((r) => r['uri'] == 'ssap://system.notifications/createAlert');
+      expect((alert['payload'] as Map)['onclose'], {
+        'uri': 'luna://com.webos.service.ime/insertText',
+        'params': {'text': 'hi', 'replace': false},
+      });
+    });
+
+    test('the notification route does not count when nothing grows', () async {
+      tv.insertTextReply = (id) => {..._frame401, 'id': id};
+      tv.keyboardPushes = [focusedPush];
+      scriptAlert();
+      final client = tv.client(await _prefs());
+      final cancel = await client.watchKeyboard((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(await client.typeText('hi'), isA<TypeRefused>());
+      cancel();
+    });
+
+    test('another error is a plain failure, not a refusal', () async {
+      tv.insertTextReply = (id) => {
+            'type': 'response',
+            'id': id,
+            'payload': {'returnValue': false, 'errorText': 'Invalid parameters'},
+          };
+      final result = await tv.client(await _prefs()).typeText('hi');
+      expect(result, isA<TypeFailed>());
+      expect((result as TypeFailed).message, 'Invalid parameters');
+    });
+
+    test('the software version is stored when the keyboard asks for it, and a new one lifts a refusal', () async {
+      tv.replies['ssap://com.webos.service.update/getCurrentSWInformation'] = (id) => {
+            'type': 'response',
+            'id': id,
+            'payload': {'returnValue': true, 'product_name': 'webOS', 'major_ver': '04', 'minor_ver': '40.43'},
+          };
+      final prefs = await _prefs();
+      await TypingSupport.noteVersion(prefs, 'webOS 04 40.00');
+      await TypingSupport.markRefused(prefs);
+      await tv.client(prefs).refreshSoftwareVersion();
+      final end = DateTime.now().add(const Duration(seconds: 3));
+      while (TypingSupport.softwareVersion(prefs) != 'webOS 04 40.43' && DateTime.now().isBefore(end)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(TypingSupport.softwareVersion(prefs), 'webOS 04 40.43');
+      expect(TypingSupport.isRefused(prefs), isFalse);
+    });
+  });
+
   group('keyboard sheet', () {
-    Future<_SheetClient> pump(WidgetTester tester, _SheetClient Function(Prefs) make) async {
+    Future<_SheetClient> pump(WidgetTester tester, _SheetClient Function(Prefs) make, {bool mark = false, String? versionBefore, Future<void> Function(Prefs)? onRefresh}) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 3.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -359,7 +536,10 @@ void main() {
       late _SheetClient client;
       await tester.runAsync(() async {
         final prefs = await _prefs();
+        if (versionBefore != null) await TypingSupport.noteVersion(prefs, versionBefore);
+        if (mark) await TypingSupport.markRefused(prefs);
         client = make(prefs);
+        if (onRefresh != null) client.onRefresh = () => onRefresh(prefs);
         final theme = AppThemeController(await ThemeManager.loadTheme('dark'));
         await tester.pumpWidget(
           AppTheme(
@@ -393,12 +573,53 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('a 401 shows the plain permission line and keeps the text', (tester) async {
-      await pump(tester, (p) => _SheetClient(p, const CmdError('401 insufficient permissions')));
+    testWidgets('a refusal marks the TV, keeps the text and switches Send to a web search', (tester) async {
+      final client = await pump(tester, (p) => _SheetClient(p, const CmdError('401 insufficient permissions')));
       expect(find.byKey(const Key('keyboard_note')), findsNothing);
       await typeAndSend(tester);
-      expect(find.text(keyboardPermissionLine), findsOneWidget);
+      expect(find.text(keyboardSearchOnlyLine), findsOneWidget);
       expect(find.text('hello'), findsOneWidget);
+      expect(TypingSupport.isRefused(client.prefs), isTrue);
+      expect(client.opened, isEmpty);
+      await tester.showKeyboard(find.byType(TextField));
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(client.opened, ['hello']);
+      expect(client.sent, ['hello']);
+      expect(find.byType(KeyboardSheet), findsNothing);
+    });
+
+    testWidgets('a TV already marked as refusing opens in search mode and never tries to type', (tester) async {
+      final client = await pump(tester, (p) => _SheetClient(p, const Success()), mark: true);
+      expect(find.text(keyboardSearchOnlyLine), findsOneWidget);
+      await typeAndSend(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(client.sent, isEmpty);
+      expect(client.opened, ['hello']);
+    });
+
+    testWidgets('a new software version on a marked TV takes the sheet back to typing', (tester) async {
+      late Prefs prefs;
+      final client = await pump(tester, (p) {
+        prefs = p;
+        return _SheetClient(p, const Success());
+      }, mark: true, versionBefore: 'webOS 04 40.00', onRefresh: (p) => TypingSupport.noteVersion(p, 'webOS 04 41.00'));
+      await tester.pump();
+      expect(find.text(keyboardSearchOnlyLine), findsNothing);
+      await typeAndSend(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(client.sent, ['hello']);
+      expect(client.opened, isEmpty);
+      expect(TypingSupport.isRefused(prefs), isFalse);
+    });
+
+    testWidgets('a TV that will not open the link says so', (tester) async {
+      final client = await pump(tester, (p) => _SheetClient(p, const Success()), mark: true);
+      client.openResult = const CmdError('401 insufficient permissions');
+      await typeAndSend(tester);
+      expect(find.text(keyboardLinkLine), findsOneWidget);
+      expect(find.byType(KeyboardSheet), findsOneWidget);
     });
 
     testWidgets('another error shows the TV text', (tester) async {
@@ -444,8 +665,20 @@ class _SheetClient extends WebOsClient {
 
   final Result result;
   final sent = <String>[];
+  final opened = <String>[];
+  Result openResult = const Success();
+  Future<void> Function()? onRefresh;
   void Function(KeyboardFocus)? focus;
   int watching = 0;
+
+  @override
+  Future<void> refreshSoftwareVersion() async => onRefresh?.call();
+
+  @override
+  Future<Result> openInBrowser(String text) async {
+    opened.add(text);
+    return openResult;
+  }
 
   @override
   Future<Result> sendText(String text) async {

@@ -61,6 +61,8 @@ class _KeyboardTestScreenState extends State<KeyboardTestScreen> {
     final probe = KeyboardProbe(
       widget.client.diagnosticSession(),
       header: header,
+      prefs: widget.client.prefs,
+      notificationInsert: widget.client.rawNotificationInsert,
       onStage: (s) {
         if (mounted) setState(() => _stage = s);
       },
@@ -77,7 +79,7 @@ class _KeyboardTestScreenState extends State<KeyboardTestScreen> {
     final seen = [for (final l in _letters) if (_seen.contains(l)) l];
     return '${_report ?? ''}\n\n'
         '== Letters on the TV afterwards ==\n'
-        'A and B were typed before the keyboard subscription, C during it, '
+        'A and B were typed before the keyboard subscription, C during it, D through the notification route, '
         'then one character was deleted.\n'
         'Visible in the TV text field: ${seen.isEmpty ? 'none' : seen.join(', ')}';
   }

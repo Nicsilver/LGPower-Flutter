@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
+import '../core/prefs.dart';
 import 'command_session.dart';
 import 'ssap_messages.dart';
+import 'typing_support.dart';
 
 const String _imeBase = 'ssap://com.webos.service.ime';
 
@@ -14,12 +16,18 @@ class KeyboardProbe {
   KeyboardProbe(
     this.session, {
     required this.header,
+    required this.prefs,
+    required this.notificationInsert,
     this.listenFor = const Duration(seconds: 15),
     this.onStage,
   });
 
   final CommandSession session;
   final String header;
+  final Prefs prefs;
+
+  /// The createAlert route aimed at insertText; both raw replies.
+  final Future<(CmdReply, CmdReply?)> Function(String text) notificationInsert;
   final Duration listenFor;
   final void Function(String stage)? onStage;
 
@@ -28,6 +36,12 @@ class KeyboardProbe {
   // earlier on does not eat into the listening time.
   final _window = Stopwatch();
   final _summary = <String>[];
+  final _lengths = <int>[];
+  // Answers of the plain insertText calls; the verdict follows from them alone.
+  final _typingAnswers = <CmdReply>[];
+  // Text that lands through the notification route means the sheet can type,
+  // so it must not go search-only.
+  bool _notificationTyped = false;
   final _log = StringBuffer();
 
   Future<String> run() async {
@@ -37,6 +51,8 @@ class KeyboardProbe {
     onStage?.call('Reading TV info');
     await _call('getSystemInfo', 'ssap://system/getSystemInfo');
     await _call('getSoftwareInformation', 'ssap://com.webos.service.update/getCurrentSWInformation');
+    _summary.add('Software version the app stored for this TV: '
+        '${TypingSupport.softwareVersion(prefs) ?? 'none (the TV did not report one)'}');
 
     onStage?.call('Checking the connection');
     await _call('control: getVolume', 'ssap://audio/getVolume');
@@ -46,18 +62,11 @@ class KeyboardProbe {
     );
 
     onStage?.call('Typing without the keyboard subscription');
-    await _call(
-      'insertText "A" replace=false',
-      '$_imeBase/insertText',
-      payload: {'text': 'A', 'replace': false},
-    );
-    await _call(
-      'insertText "B" replace=0',
-      '$_imeBase/insertText',
-      payload: {'text': 'B', 'replace': 0},
-    );
+    await _typingCall('insertText "A" replace=false', {'text': 'A', 'replace': false});
+    await _typingCall('insertText "B" replace=0', {'text': 'B', 'replace': 0});
 
     await _keyboardWindow();
+    await _recordVerdict();
 
     final out = StringBuffer()
       ..writeln(header)
@@ -80,6 +89,8 @@ class KeyboardProbe {
       onFrame: (frame) {
         pushes++;
         _line('push #$pushes ${frame['type']}', frame: frame);
+        final length = keyboardTextLengthOf(frame['payload'] as Map<String, dynamic>?);
+        if (length != null) _lengths.add(length);
       },
     );
     if (id == null) {
@@ -88,11 +99,9 @@ class KeyboardProbe {
     }
 
     await _until(listenFor * 0.2);
-    await _call(
-      'insertText "C" replace=false (subscribed)',
-      '$_imeBase/insertText',
-      payload: {'text': 'C', 'replace': false},
-    );
+    await _typingCall('insertText "C" replace=false (subscribed)', {'text': 'C', 'replace': false});
+    await _until(listenFor * 0.3);
+    await _notificationProbe();
     await _until(listenFor * 0.4);
     await _call(
       'deleteCharacters count=1',
@@ -106,6 +115,49 @@ class KeyboardProbe {
     if (id != null) {
       session.unsubscribe(id);
       _summary.add('registerRemoteKeyboard: $pushes frame(s) in ${listenFor.inSeconds} s');
+    }
+  }
+
+  Future<void> _typingCall(String label, Map<String, dynamic> payload) async {
+    final reply = await _call(label, '$_imeBase/insertText', payload: payload);
+    _typingAnswers.add(reply);
+  }
+
+  Future<void> _notificationProbe() async {
+    _section('insertText "D" through the notification route');
+    final before = _lengths.isEmpty ? null : _lengths.last;
+    final (alert, close) = await notificationInsert('D');
+    _line('alert: ${_statusOf(alert)}', frame: alert is CmdReplyOk ? alert.raw : null);
+    if (close != null) _line('close: ${_statusOf(close)}', frame: close is CmdReplyOk ? close.raw : null);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    final after = _lengths.isEmpty ? null : _lengths.last;
+    if (before != null && after != null && after > before) _notificationTyped = true;
+    _summary.add('insertText "D" through the notification route: alert ${_statusOf(alert)}'
+        '${close == null ? '' : ', close ${_statusOf(close)}'}'
+        ', text length ${before == null || after == null ? 'not reported' : after > before ? 'grew' : 'did not grow'}');
+  }
+
+  String _statusOf(CmdReply r) => switch (r) {
+        CmdReplyOk() => 'OK',
+        CmdReplyErr(:final message) => 'ERROR $message',
+        CmdReplyNeedsPairing() => 'TV is asking for pairing',
+      };
+
+  /// Re-checks the per-TV "typing refused" mark from this run, so a TV is
+  /// never stuck as unsupported.
+  Future<void> _recordVerdict() async {
+    final accepted = _typingAnswers.any((r) => r is CmdReplyOk) || _notificationTyped;
+    final refused = _typingAnswers.isNotEmpty &&
+        _typingAnswers.every((r) => r is CmdReplyErr && isSsapPermissionError(r.message));
+    if (accepted) {
+      await TypingSupport.clear(prefs);
+      _summary.add('Typing verdict: the TV accepted text, the keyboard is on for this TV');
+    } else if (refused) {
+      await TypingSupport.markRefused(prefs);
+      _summary.add('Typing verdict: the TV refused text with a permission error, '
+          'the keyboard now offers a web search on the TV instead');
+    } else {
+      _summary.add('Typing verdict: unclear, nothing was changed');
     }
   }
 
@@ -129,7 +181,7 @@ class KeyboardProbe {
         : 'granted permissions: $perms');
   }
 
-  Future<void> _call(
+  Future<CmdReply> _call(
     String label,
     String uri, {
     Map<String, dynamic> payload = const {},
@@ -147,6 +199,7 @@ class KeyboardProbe {
         _summary.add('$label: TV is asking for pairing');
         _line('the TV is waiting for the pairing prompt to be accepted');
     }
+    return reply;
   }
 
   void _section(String title) => _log.writeln('\n== $title ==');
