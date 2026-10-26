@@ -825,18 +825,6 @@ class WebOsClient {
   Future<Result> closeServiceMenu() =>
       _execute('ssap://system.launcher/close', payload: {'id': factoryAppId});
 
-  /// Null when the TV doesn't say, which callers must not read as "not open".
-  Future<String?> foregroundAppId() async {
-    if (tvIp.isEmpty) return null;
-    final reply = await _commandSession().send(
-      'ssap://com.webos.applicationManager/getForegroundAppInfo',
-      timeoutSecs: 3,
-    );
-    if (reply is! CmdReplyOk) return null;
-    final id = reply.payload['appId'];
-    return id is String && id.isNotEmpty ? id : null;
-  }
-
   Future<Result> sendText(String text) => _execute(
         'ssap://com.webos.service.ime/insertText',
         payload: {'text': text, 'replace': false},

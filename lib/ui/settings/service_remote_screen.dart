@@ -17,7 +17,6 @@ const _amber = Color(0xFFE8A33D);
 abstract interface class ServiceLink {
   Future<Result> launch(ServiceMenu menu);
   Future<Result> close();
-  Future<String?> foregroundAppId();
   Future<Result> pressKey(String key);
 }
 
@@ -29,8 +28,6 @@ class ClientServiceLink implements ServiceLink {
   Future<Result> launch(ServiceMenu menu) => client.launchServiceMenu(menu);
   @override
   Future<Result> close() => client.closeServiceMenu();
-  @override
-  Future<String?> foregroundAppId() => client.foregroundAppId();
   @override
   Future<Result> pressKey(String key) => client.pressKey(key);
 }
@@ -62,7 +59,6 @@ class ServiceRemoteScreen extends StatefulWidget {
     required this.link,
     this.hasEmitter = Ir.hasEmitter,
     this.transmit = Ir.transmit,
-    this.menuPollDelay = const Duration(milliseconds: 600),
   });
 
   final ServiceLink link;
@@ -70,7 +66,6 @@ class ServiceRemoteScreen extends StatefulWidget {
   /// Injectable for tests; defaults to the real platform channel.
   final Future<bool> Function() hasEmitter;
   final Future<void> Function(int carrierHz, List<int> pattern) transmit;
-  final Duration menuPollDelay;
 
   @override
   State<ServiceRemoteScreen> createState() => _ServiceRemoteScreenState();
@@ -175,26 +170,14 @@ class _ServiceRemoteScreenState extends State<ServiceRemoteScreen> {
       final problem = switch (r) {
         NeedsPairing() => _pairingText,
         CmdError(:final message) => _isUnreachable(message) ? _unreachableText : _refusedText(),
-        Success() => await _menuIsUp() ? null : _refusedText(),
+        // The C4 never reports factorywin as the foreground app (it keeps naming
+        // the app underneath), so the launch reply is the only signal there is.
+        Success() => null,
       };
       if (problem != null) _toast(problem);
     } finally {
       _menuBusy = false;
     }
-  }
-
-  // A TV that accepts the launch but never shows the menu still answers
-  // success, so the foreground app is the check. A reply that can't be read
-  // counts as open: a false "didn't open" while the menu is on screen is
-  // worse than missing a silent ignore.
-  Future<bool> _menuIsUp() async {
-    for (var i = 0; i < 4; i++) {
-      await Future<void>.delayed(widget.menuPollDelay);
-      if (!mounted) return true;
-      final id = await widget.link.foregroundAppId();
-      if (id == null || id == factoryAppId) return true;
-    }
-    return false;
   }
 
   Future<void> _closeOverWifi() async {

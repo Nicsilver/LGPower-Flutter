@@ -47,16 +47,15 @@ class _FakeIr {
 
 class _FakeLink implements ServiceLink {
   Result launchResult = const Success();
-  // Null reads as "the TV doesn't say"
-  String? foreground = factoryAppId;
   final List<ServiceMenu> launched = [];
   final List<String> keys = [];
   int closed = 0;
-  int polls = 0;
 
   @override
   Future<Result> launch(ServiceMenu menu) async {
     launched.add(menu);
+    // In flight long enough for a second tap to land on the busy guard
+    await Future<void>.delayed(const Duration(milliseconds: 50));
     return launchResult;
   }
 
@@ -64,12 +63,6 @@ class _FakeLink implements ServiceLink {
   Future<Result> close() async {
     closed++;
     return const Success();
-  }
-
-  @override
-  Future<String?> foregroundAppId() async {
-    polls++;
-    return foreground;
   }
 
   @override
@@ -91,7 +84,6 @@ Widget _app(AppThemeController controller, _FakeIr fakeIr, _FakeLink link) {
                 link: link,
                 hasEmitter: fakeIr.hasEmitterFn,
                 transmit: fakeIr.transmitFn,
-                menuPollDelay: Duration.zero,
               ),
             ),
           ),
@@ -215,7 +207,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(link.launched, [ServiceMenu.inStart, ServiceMenu.ezAdjust]);
-    expect(link.polls, 2);
     expect(fakeIr.sent, isEmpty);
     expect(find.textContaining("didn't open"), findsNothing);
   });
@@ -234,20 +225,6 @@ void main() {
     expect(fakeIr.sent.single.$2, Ir.necPattern(Ir.lgCode(0x14)));
   });
 
-  testWidgets('a TV that answers success but never shows the menu gets the message', (tester) async {
-    _setPhoneSize(tester);
-    final controller = await _harness();
-    final link = _FakeLink()..foreground = 'com.webos.app.home';
-    await _open(tester, controller, _FakeIr(hasEmitter: true), link);
-
-    await tester.tap(find.byKey(_wifiStart));
-    await tester.pumpAndSettle();
-
-    expect(link.polls, 4);
-    expect(find.text("Your TV didn't open the service menu over Wi-Fi. Try IR."), findsOneWidget);
-    await _expireToast(tester);
-  });
-
   testWidgets('a double tap on a Wi-Fi tile launches once', (tester) async {
     _setPhoneSize(tester);
     final controller = await _harness();
@@ -263,18 +240,6 @@ void main() {
     expect(link.closed, 0);
   });
 
-  testWidgets('a foreground reply that cannot be read is not a refusal', (tester) async {
-    _setPhoneSize(tester);
-    final controller = await _harness();
-    final link = _FakeLink()..foreground = null;
-    await _open(tester, controller, _FakeIr(hasEmitter: true), link);
-
-    await tester.tap(find.byKey(_wifiStart));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining("didn't open"), findsNothing);
-  });
-
   testWidgets('an error from the TV shows the refusal, no reply shows unreachable, no key shows pairing', (tester) async {
     _setPhoneSize(tester);
     final controller = await _harness();
@@ -284,7 +249,6 @@ void main() {
     await tester.tap(find.byKey(_wifiStart));
     await tester.pumpAndSettle();
     expect(find.text("Your TV didn't open the service menu over Wi-Fi. Try IR."), findsOneWidget);
-    expect(link.polls, 0);
     await _expireToast(tester);
 
     link.launchResult = const CmdError('Timeout. Is the TV on and reachable?');
