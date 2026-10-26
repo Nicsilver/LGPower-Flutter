@@ -75,7 +75,7 @@ const _tileOrder = [
   '7', '8', '9',
   '0',
   'BACK', '▲', 'EXIT',
-  '◀', 'OK', '▶',
+  '◀\u{FE0E}', 'OK', '▶\u{FE0E}',
   'PWR', '▼',
 ];
 
@@ -129,7 +129,7 @@ void main() {
     const commands = {
       'IN-START': 0xFB, 'EZ-ADJUST': 0xFF,
       '1': 0x11, '2': 0x12, '3': 0x13, '4': 0x14, '5': 0x15, '6': 0x16, '7': 0x17, '8': 0x18, '9': 0x19, '0': 0x10,
-      'BACK': 0x28, '▲': 0x40, 'EXIT': 0x5B, '◀': 0x07, 'OK': 0x44, '▶': 0x06, 'PWR': 0x08, '▼': 0x41,
+      'BACK': 0x28, '▲': 0x40, 'EXIT': 0x5B, '◀\u{FE0E}': 0x07, 'OK': 0x44, '▶\u{FE0E}': 0x06, 'PWR': 0x08, '▼': 0x41,
     };
     for (final e in commands.entries) {
       await tester.tap(find.text(e.key));

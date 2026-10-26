@@ -202,9 +202,9 @@ List<Widget> serviceKeyGrid({required bool withPower, required void Function(Ser
       t(const ServiceKey('EXIT', 0x5B, 'EXIT')),
     ]),
     ServiceRow([
-      t(const ServiceKey('◀', 0x07, 'LEFT')),
+      t(const ServiceKey('◀\u{FE0E}', 0x07, 'LEFT')),
       t(const ServiceKey('OK', 0x44, 'ENTER')),
-      t(const ServiceKey('▶', 0x06, 'RIGHT')),
+      t(const ServiceKey('▶\u{FE0E}', 0x06, 'RIGHT')),
     ]),
     ServiceRow([
       withPower ? t(_power) : const ServiceSpacer(),

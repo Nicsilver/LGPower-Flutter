@@ -92,7 +92,7 @@ void main() {
       for (final label in [
         'IN-START', 'EZ-ADJUST', 'CLOSE MENU',
         '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
-        'BACK', '▲', 'EXIT', '◀', 'OK', '▶', '▼',
+        'BACK', '▲', 'EXIT', '◀\u{FE0E}', 'OK', '▶\u{FE0E}', '▼',
       ]) {
         expect(find.text(label), findsOneWidget, reason: 'missing tile "$label"');
       }
@@ -128,7 +128,7 @@ void main() {
 
     const keys = {
       '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9', '0': '0',
-      '▲': 'UP', '▼': 'DOWN', '◀': 'LEFT', '▶': 'RIGHT', 'OK': 'ENTER', 'BACK': 'BACK', 'EXIT': 'EXIT',
+      '▲': 'UP', '▼': 'DOWN', '◀\u{FE0E}': 'LEFT', '▶\u{FE0E}': 'RIGHT', 'OK': 'ENTER', 'BACK': 'BACK', 'EXIT': 'EXIT',
     };
     for (final label in keys.keys) {
       await tester.tap(find.text(label));
