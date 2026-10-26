@@ -14,6 +14,8 @@ import 'package:lgpower/core/right_pill.dart';
 import 'package:lgpower/core/tv_store.dart';
 import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/theme/theme_manager.dart';
+import 'package:lgpower/ui/settings/service_menu_wifi_screen.dart';
+import 'package:lgpower/ui/settings/service_remote_screen.dart';
 import 'package:lgpower/ui/settings/settings_screen.dart';
 import 'package:lgpower/ui/settings/tv_detail_screen.dart';
 import 'package:lgpower/ui/widgets/app_switch.dart';
@@ -270,6 +272,52 @@ void main() {
       // showToast's auto-dismiss uses a real Timer; let it fire so the test
       // doesn't end with a pending timer (flutter_test's invariant check).
       await tester.pump(const Duration(seconds: 3));
+    });
+  });
+
+  group('Service menu rows', () {
+    Future<WebOsClient> openSettings(WidgetTester tester, {required bool hasIr}) async {
+      SharedPreferences.setMockInitialValues({});
+      final (_, client, controller) = await _harness();
+      await tester.pumpWidget(
+        AppTheme(
+          controller: controller,
+          child: MaterialApp(
+            home: SettingsScreen(client: client, hasIrEmitter: () async => hasIr),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return client;
+    }
+
+    testWidgets('a phone with a blaster gets both rows, each opening its own page', (tester) async {
+      await openSettings(tester, hasIr: true);
+
+      expect(find.text('Service Remote'), findsNothing);
+      await tester.ensureVisible(find.text('Service Menu (IR)'));
+      expect(find.text('Service Menu (Wi-Fi)'), findsOneWidget);
+
+      await tester.tap(find.text('Service Menu (Wi-Fi)'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ServiceMenuWifiScreen), findsOneWidget);
+      expect(find.byType(ServiceRemoteScreen), findsNothing);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(find.byType(ServiceMenuWifiScreen), findsNothing);
+
+      await tester.tap(find.text('Service Menu (IR)'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ServiceRemoteScreen), findsOneWidget);
+      expect(find.byType(ServiceMenuWifiScreen), findsNothing);
+    });
+
+    testWidgets('a phone without a blaster only gets the Wi-Fi row', (tester) async {
+      await openSettings(tester, hasIr: false);
+
+      await tester.ensureVisible(find.text('Service Menu (Wi-Fi)'));
+      expect(find.text('Service Menu (Wi-Fi)'), findsOneWidget);
+      expect(find.text('Service Menu (IR)'), findsNothing);
     });
   });
 

@@ -27,6 +27,7 @@ import '../widgets/section.dart';
 import '../widgets/spotlight_tour.dart';
 import '../widgets/warning_sheet.dart';
 import 'keyboard_test_screen.dart';
+import 'service_menu_wifi_screen.dart';
 import 'service_remote_screen.dart';
 import 'theme_editor_screen.dart';
 import 'tv_detail_screen.dart';
@@ -42,6 +43,7 @@ class SettingsScreen extends StatefulWidget {
     this.listApps,
     this.limited = false,
     this.backLabel = 'Remote',
+    this.hasIrEmitter = Ir.hasEmitter,
   });
 
   final WebOsClient client;
@@ -55,6 +57,9 @@ class SettingsScreen extends StatefulWidget {
 
   /// Injectable for tests; defaults to [WebOsClient.listApps] (real TV call).
   final Future<(List<TvApp>, String?)> Function()? listApps;
+
+  /// Injectable for tests; gates the IR service menu row.
+  final Future<bool> Function() hasIrEmitter;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -133,7 +138,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadIrEmitter() async {
-    final hasEmitter = await Ir.hasEmitter();
+    final hasEmitter = await widget.hasIrEmitter();
     if (mounted) setState(() => _hasIrEmitter = hasEmitter);
   }
 
@@ -394,10 +399,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _openServiceRemote() {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => ServiceRemoteScreen(link: ClientServiceLink(widget.client))));
+  void _openServiceMenuWifi() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ServiceMenuWifiScreen(link: ClientServiceLink(widget.client))),
+    );
+  }
+
+  void _openServiceMenuIr() {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ServiceRemoteScreen()));
   }
 
   // The tour runs on the remote itself, so hand back to it
@@ -768,11 +777,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _advancedGroup(ThemeConfig theme) {
-    return _navRow(
-      theme,
-      label: 'Service Remote',
-      onTap: _openServiceRemote,
-      correctedChevron: false,
+    return Column(
+      children: [
+        _navRow(
+          theme,
+          label: 'Service Menu (Wi-Fi)',
+          onTap: _openServiceMenuWifi,
+          correctedChevron: false,
+        ),
+        // The IR page does nothing on a phone without a blaster (or on iOS)
+        if (_hasIrEmitter) ...[
+          const RowDivider(),
+          _navRow(
+            theme,
+            label: 'Service Menu (IR)',
+            onTap: _openServiceMenuIr,
+            correctedChevron: false,
+          ),
+        ],
+      ],
     );
   }
 
