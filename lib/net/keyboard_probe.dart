@@ -39,6 +39,9 @@ class KeyboardProbe {
   final _lengths = <int>[];
   // Answers of the plain insertText calls; the verdict follows from them alone.
   final _typingAnswers = <CmdReply>[];
+  // Text that lands through the notification route means the sheet can type,
+  // so it must not go search-only.
+  bool _notificationTyped = false;
   final _log = StringBuffer();
 
   Future<String> run() async {
@@ -128,6 +131,7 @@ class KeyboardProbe {
     if (close != null) _line('close: ${_statusOf(close)}', frame: close is CmdReplyOk ? close.raw : null);
     await Future<void>.delayed(const Duration(seconds: 2));
     final after = _lengths.isEmpty ? null : _lengths.last;
+    if (before != null && after != null && after > before) _notificationTyped = true;
     _summary.add('insertText "D" through the notification route: alert ${_statusOf(alert)}'
         '${close == null ? '' : ', close ${_statusOf(close)}'}'
         ', text length ${before == null || after == null ? 'not reported' : after > before ? 'grew' : 'did not grow'}');
@@ -142,7 +146,7 @@ class KeyboardProbe {
   /// Re-checks the per-TV "typing refused" mark from this run, so a TV is
   /// never stuck as unsupported.
   Future<void> _recordVerdict() async {
-    final accepted = _typingAnswers.any((r) => r is CmdReplyOk);
+    final accepted = _typingAnswers.any((r) => r is CmdReplyOk) || _notificationTyped;
     final refused = _typingAnswers.isNotEmpty &&
         _typingAnswers.every((r) => r is CmdReplyErr && isSsapPermissionError(r.message));
     if (accepted) {

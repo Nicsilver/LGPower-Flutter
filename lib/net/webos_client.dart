@@ -929,6 +929,9 @@ class WebOsClient {
   /// types sends nothing extra.
   Future<void> refreshSoftwareVersion() async {
     if (tvIp.isEmpty) return;
+    // A keyboard opened right on resume must not pick up the session the
+    // resume check may still retire.
+    await _resumeGate.wait(_resumeGateMax);
     final session = _commandSession();
     if (identical(_versionReadFor, session)) return;
     _versionReadFor = session;

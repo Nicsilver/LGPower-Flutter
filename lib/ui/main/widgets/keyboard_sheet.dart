@@ -100,11 +100,12 @@ class _KeyboardSheetState extends State<KeyboardSheet> {
         TypeFailed(:final message) => CmdError(message),
       };
     });
+    // Marked even when the sheet was closed during the send, so the next open
+    // goes straight to search.
+    if (result is CmdRefused) await TypingSupport.markRefused(client.prefs);
     if (!mounted) return;
     switch (result) {
       case CmdRefused():
-        await TypingSupport.markRefused(client.prefs);
-        if (!mounted) return;
         setState(() {
           _sending = false;
           _searchOnly = true;

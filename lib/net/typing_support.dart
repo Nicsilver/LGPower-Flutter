@@ -57,14 +57,17 @@ class TypingSupport {
     return parts.isEmpty ? null : parts.join(' ');
   }
 
-  static final _link = RegExp(r'^[\w-]+(\.[\w-]+)+(/\S*)?$');
+  // The last label must be letters, so "3.14" or "v1.2" stay searches.
+  static final _link = RegExp(r'^[\w-]+(\.[\w-]+)*\.[A-Za-z]{2,}(/\S*)?$');
 
   /// What the TV browser opens for typed text: a link as typed, anything else
   /// as a web search.
   static String browserTarget(String text) {
     final t = text.trim();
-    if (t.startsWith('http://') || t.startsWith('https://')) return t;
-    if (!t.contains(' ') && _link.hasMatch(t)) return 'https://$t';
+    if (!t.contains(RegExp(r'\s'))) {
+      if (t.startsWith('http://') || t.startsWith('https://')) return t;
+      if (_link.hasMatch(t)) return 'https://$t';
+    }
     return 'https://www.google.com/search?q=${Uri.encodeQueryComponent(t)}';
   }
 }

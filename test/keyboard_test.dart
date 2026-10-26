@@ -404,6 +404,8 @@ void main() {
       expect(TypingSupport.browserTarget('example.com'), 'https://example.com');
       expect(TypingSupport.browserTarget('cat videos'), 'https://www.google.com/search?q=cat+videos');
       expect(TypingSupport.browserTarget(' planet '), 'https://www.google.com/search?q=planet');
+      expect(TypingSupport.browserTarget('3.14'), 'https://www.google.com/search?q=3.14');
+      expect(TypingSupport.browserTarget('javascript:alert(1)'), 'https://www.google.com/search?q=javascript%3Aalert%281%29');
     });
 
     test('the version comes from whatever the TV reports', () {
