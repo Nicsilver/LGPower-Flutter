@@ -1,13 +1,12 @@
-// Covers spec §4's tile grid (labels + row order), the IN-STOP confirm
-// sheet's accept-only send, and the Wi-Fi service menu launch with its failure
-// messages. The real platform channel and TV are never touched --
-// hasEmitter/transmit/link are injected fakes.
+// Covers the Service Menu (IR) page: spec §4's tile grid (labels + row order),
+// the POWER-ONLY / IN-STOP confirm sheets' accept-only send, and that nothing
+// on it touches Wi-Fi. The real platform channel is never touched --
+// hasEmitter/transmit are injected fakes.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:lgpower/net/ir.dart';
-import 'package:lgpower/net/webos_client.dart';
 import 'package:lgpower/theme/theme_manager.dart';
 import 'package:lgpower/ui/settings/service_remote_screen.dart';
 
@@ -45,34 +44,7 @@ class _FakeIr {
   }
 }
 
-class _FakeLink implements ServiceLink {
-  Result launchResult = const Success();
-  final List<ServiceMenu> launched = [];
-  final List<String> keys = [];
-  int closed = 0;
-
-  @override
-  Future<Result> launch(ServiceMenu menu) async {
-    launched.add(menu);
-    // In flight long enough for a second tap to land on the busy guard
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    return launchResult;
-  }
-
-  @override
-  Future<Result> close() async {
-    closed++;
-    return const Success();
-  }
-
-  @override
-  Future<Result> pressKey(String key) async {
-    keys.add(key);
-    return const Success();
-  }
-}
-
-Widget _app(AppThemeController controller, _FakeIr fakeIr, _FakeLink link) {
+Widget _app(AppThemeController controller, _FakeIr fakeIr) {
   return AppTheme(
     controller: controller,
     child: MaterialApp(
@@ -81,7 +53,6 @@ Widget _app(AppThemeController controller, _FakeIr fakeIr, _FakeLink link) {
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => ServiceRemoteScreen(
-                link: link,
                 hasEmitter: fakeIr.hasEmitterFn,
                 transmit: fakeIr.transmitFn,
               ),
@@ -108,52 +79,35 @@ const _tileOrder = [
   'PWR', '▼',
 ];
 
-// IN-START and EZ-ADJUST sit twice on an IR phone (Wi-Fi row, IR row); the IR
-// copy is the later one.
-Finder _tile(String label) =>
-    label == 'IN-START' || label == 'EZ-ADJUST' ? find.text(label).last : find.text(label);
-
-const _wifiStart = ValueKey('wifi-IN-START');
-const _wifiEz = ValueKey('wifi-EZ-ADJUST');
-const _wifiClose = ValueKey('wifi-CLOSE');
-
-// Opens the screen and accepts the entry warning, which both phone kinds show
-Future<void> _open(WidgetTester tester, AppThemeController controller, _FakeIr fakeIr, _FakeLink link) async {
-  await tester.pumpWidget(_app(controller, fakeIr, link));
+Future<void> _open(WidgetTester tester, AppThemeController controller, _FakeIr fakeIr) async {
+  await tester.pumpWidget(_app(controller, fakeIr));
   await tester.tap(find.text('open'));
   await tester.pumpAndSettle();
   await tester.tap(find.text('I understand the risks'));
   await tester.pumpAndSettle();
 }
 
-// Lets the toast's own timer run out so the test doesn't end with it pending
-Future<void> _expireToast(WidgetTester tester) => tester.pump(const Duration(seconds: 4));
-
 void main() {
   installFakePathProvider();
 
-  testWidgets('renders the Wi-Fi row and 22 IR tiles with the right labels/order', (tester) async {
+  testWidgets('renders the 22 IR tiles with the right labels/order and no Wi-Fi buttons', (tester) async {
     _setPhoneSize(tester);
     final controller = await _harness();
-    await _open(tester, controller, _FakeIr(hasEmitter: true), _FakeLink());
+    await _open(tester, controller, _FakeIr(hasEmitter: true));
 
     expect(_tileOrder.length, 22);
     for (final label in _tileOrder) {
-      expect(_tile(label), findsOneWidget, reason: 'missing tile "$label"');
+      expect(find.text(label), findsOneWidget, reason: 'missing tile "$label"');
     }
-    expect(find.byKey(_wifiStart), findsOneWidget);
-    expect(find.byKey(_wifiEz), findsOneWidget);
-    expect(find.byKey(_wifiClose), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.byKey(_wifiStart)).dy,
-      lessThan(tester.getTopLeft(find.text('POWER-ONLY')).dy),
-      reason: 'the Wi-Fi row comes first',
-    );
+    expect(find.text('CLOSE MENU'), findsNothing);
+    expect(find.text('OVER WI-FI'), findsNothing);
+    expect(find.text('FACTORY ENTRY'), findsOneWidget);
+    expect(find.text('MKJ39170828 REPLICA · IR ONLY'), findsOneWidget);
 
     // Same row -> identical y, increasing x; next row -> strictly greater y.
     Offset? prev;
     for (final label in _tileOrder) {
-      final pos = tester.getTopLeft(_tile(label));
+      final pos = tester.getTopLeft(find.text(label));
       if (prev != null) {
         final sameRow = (pos.dy - prev.dy).abs() < 0.5;
         if (sameRow) {
@@ -166,153 +120,65 @@ void main() {
     }
   });
 
-  testWidgets('IN-STOP opens a confirm sheet and only sends on accept', (tester) async {
+  testWidgets('every tile sends its own NEC command', (tester) async {
     _setPhoneSize(tester);
     final controller = await _harness();
     final fakeIr = _FakeIr(hasEmitter: true);
-    await _open(tester, controller, fakeIr, _FakeLink());
+    await _open(tester, controller, fakeIr);
 
-    await tester.tap(find.text('IN-STOP'));
-    await tester.pumpAndSettle();
-    expect(find.text('CONFIRM'), findsOneWidget);
-    expect(find.text('Send IN-STOP'), findsOneWidget);
-    expect(fakeIr.sent, isEmpty);
-
-    // Cancelling (tap the dimmed barrier) must not send anything.
-    await tester.tapAt(const Offset(10, 10));
-    await tester.pumpAndSettle();
-    expect(fakeIr.sent, isEmpty);
-    expect(find.text('IN-STOP'), findsOneWidget); // back on the main grid
-
-    await tester.tap(find.text('IN-STOP'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Send IN-STOP'));
-    await tester.pumpAndSettle();
-
-    expect(fakeIr.sent, hasLength(1));
-    expect(fakeIr.sent.single.$1, 38000);
-    expect(fakeIr.sent.single.$2, Ir.necPattern(Ir.lgCode(0xFA)));
-  });
-
-  testWidgets('IR phone: Wi-Fi tiles launch factorywin and send no IR', (tester) async {
-    _setPhoneSize(tester);
-    final controller = await _harness();
-    final fakeIr = _FakeIr(hasEmitter: true);
-    final link = _FakeLink();
-    await _open(tester, controller, fakeIr, link);
-
-    await tester.tap(find.byKey(_wifiStart));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(_wifiEz));
-    await tester.pumpAndSettle();
-
-    expect(link.launched, [ServiceMenu.inStart, ServiceMenu.ezAdjust]);
-    expect(fakeIr.sent, isEmpty);
-    expect(find.textContaining("didn't open"), findsNothing);
-  });
-
-  testWidgets('IR phone keeps sending digits over IR, not the pointer', (tester) async {
-    _setPhoneSize(tester);
-    final controller = await _harness();
-    final fakeIr = _FakeIr(hasEmitter: true);
-    final link = _FakeLink();
-    await _open(tester, controller, fakeIr, link);
-
-    await tester.tap(find.text('4'));
-    await tester.pumpAndSettle();
-
-    expect(link.keys, isEmpty);
-    expect(fakeIr.sent.single.$2, Ir.necPattern(Ir.lgCode(0x14)));
-  });
-
-  testWidgets('a double tap on a Wi-Fi tile launches once', (tester) async {
-    _setPhoneSize(tester);
-    final controller = await _harness();
-    final link = _FakeLink();
-    await _open(tester, controller, _FakeIr(hasEmitter: true), link);
-
-    await tester.tap(find.byKey(_wifiStart));
-    await tester.tap(find.byKey(_wifiStart));
-    await tester.tap(find.byKey(_wifiClose));
-    await tester.pumpAndSettle();
-
-    expect(link.launched, [ServiceMenu.inStart]);
-    expect(link.closed, 0);
-  });
-
-  testWidgets('an error from the TV shows the refusal, no reply shows unreachable, no key shows pairing', (tester) async {
-    _setPhoneSize(tester);
-    final controller = await _harness();
-    final link = _FakeLink()..launchResult = const CmdError('404 application not found');
-    await _open(tester, controller, _FakeIr(hasEmitter: true), link);
-
-    await tester.tap(find.byKey(_wifiStart));
-    await tester.pumpAndSettle();
-    expect(find.text("Your TV didn't open the service menu over Wi-Fi. Try IR."), findsOneWidget);
-    await _expireToast(tester);
-
-    link.launchResult = const CmdError('Timeout. Is the TV on and reachable?');
-    await tester.tap(find.byKey(_wifiEz));
-    await tester.pumpAndSettle();
-    expect(find.text("Can't reach the TV. Check it is on and on this Wi-Fi."), findsOneWidget);
-    await _expireToast(tester);
-
-    link.launchResult = const NeedsPairing();
-    await tester.tap(find.byKey(_wifiStart));
-    await tester.pumpAndSettle();
-    expect(find.text('Accept pairing on your TV, then try again.'), findsOneWidget);
-    await _expireToast(tester);
-  });
-
-  testWidgets('CLOSE MENU closes the factory app', (tester) async {
-    _setPhoneSize(tester);
-    final controller = await _harness();
-    final link = _FakeLink();
-    await _open(tester, controller, _FakeIr(hasEmitter: true), link);
-
-    await tester.tap(find.byKey(_wifiClose));
-    await tester.pumpAndSettle();
-
-    expect(link.closed, 1);
-  });
-
-  testWidgets('no emitter: Wi-Fi tiles only, keys ride the pointer', (tester) async {
-    _setPhoneSize(tester);
-    final controller = await _harness();
-    final fakeIr = _FakeIr(hasEmitter: false);
-    final link = _FakeLink();
-    await _open(tester, controller, fakeIr, link);
-
-    expect(find.text('NO IR BLASTER'), findsNothing);
-    for (final gone in ['POWER-ONLY', 'IN-STOP', 'PWR', 'FACTORY ENTRY · IR']) {
-      expect(find.text(gone), findsNothing, reason: '"$gone" is IR-only');
-    }
-    expect(find.text('IN-START'), findsOneWidget);
-    expect(find.text('EZ-ADJUST'), findsOneWidget);
-
-    for (final label in ['0', '4', '1', '3', 'BACK', '▲', '▼', '◀', '▶', 'OK', 'EXIT']) {
-      await tester.tap(find.text(label));
+    const commands = {
+      'IN-START': 0xFB, 'EZ-ADJUST': 0xFF,
+      '1': 0x11, '2': 0x12, '3': 0x13, '4': 0x14, '5': 0x15, '6': 0x16, '7': 0x17, '8': 0x18, '9': 0x19, '0': 0x10,
+      'BACK': 0x28, '▲': 0x40, 'EXIT': 0x5B, '◀': 0x07, 'OK': 0x44, '▶': 0x06, 'PWR': 0x08, '▼': 0x41,
+    };
+    for (final e in commands.entries) {
+      await tester.tap(find.text(e.key));
       await tester.pumpAndSettle();
     }
-    expect(link.keys, ['0', '4', '1', '3', 'BACK', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'ENTER', 'EXIT']);
-    expect(fakeIr.sent, isEmpty);
-
-    link.launchResult = const CmdError('404 application not found');
-    await tester.tap(find.byKey(_wifiStart));
-    await tester.pumpAndSettle();
-    expect(find.text("Your TV didn't open the service menu over Wi-Fi."), findsOneWidget);
-    await _expireToast(tester);
+    expect(fakeIr.sent.map((s) => s.$2).toList(), [
+      for (final cmd in commands.values) Ir.necPattern(Ir.lgCode(cmd)),
+    ]);
+    expect(fakeIr.sent.every((s) => s.$1 == 38000), isTrue);
   });
 
-  testWidgets('no emitter: cancelling the warning closes the screen', (tester) async {
+  for (final (title, cmd) in [('POWER-ONLY', 0xFE), ('IN-STOP', 0xFA)]) {
+    testWidgets('$title opens a confirm sheet and only sends on accept', (tester) async {
+      _setPhoneSize(tester);
+      final controller = await _harness();
+      final fakeIr = _FakeIr(hasEmitter: true);
+      await _open(tester, controller, fakeIr);
+
+      await tester.tap(find.text(title));
+      await tester.pumpAndSettle();
+      expect(find.text('CONFIRM'), findsOneWidget);
+      expect(find.text('Send $title'), findsOneWidget);
+      expect(fakeIr.sent, isEmpty);
+
+      // Cancelling (tap the dimmed barrier) must not send anything.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(fakeIr.sent, isEmpty);
+      expect(find.text(title), findsOneWidget); // back on the main grid
+
+      await tester.tap(find.text(title));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send $title'));
+      await tester.pumpAndSettle();
+
+      expect(fakeIr.sent, hasLength(1));
+      expect(fakeIr.sent.single.$1, 38000);
+      expect(fakeIr.sent.single.$2, Ir.necPattern(Ir.lgCode(cmd)));
+    });
+  }
+
+  testWidgets('no emitter: the page says so and cancelling closes it', (tester) async {
     _setPhoneSize(tester);
     final controller = await _harness();
-    await tester.pumpWidget(_app(controller, _FakeIr(hasEmitter: false), _FakeLink()));
+    await tester.pumpWidget(_app(controller, _FakeIr(hasEmitter: false)));
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
-    expect(find.text('FACTORY CONTROLS'), findsOneWidget);
-    expect(find.textContaining('Only change what you know.'), findsOneWidget);
+    expect(find.text('NO IR BLASTER'), findsOneWidget);
 
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();

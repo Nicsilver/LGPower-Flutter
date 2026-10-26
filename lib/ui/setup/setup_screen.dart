@@ -326,7 +326,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 const SizedBox(height: 28),
                 TextButton(
                   onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => ServiceRemoteScreen(link: ClientServiceLink(widget.client))),
+                    MaterialPageRoute(builder: (_) => const ServiceRemoteScreen()),
                   ),
                   child: Text(
                     'Skip, use the IR service remote',
