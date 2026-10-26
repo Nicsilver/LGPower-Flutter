@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'ripple.dart';
+
 /// Shared press-scale feedback (spec §5's "global press animation"): scale to
 /// [pressedScale] over 70ms on down, back to 1.0 over 150ms on up/cancel,
 /// same as Android's `applyPressAnimations`. The listener still lets the tap
@@ -12,6 +14,7 @@ class PressScale extends StatefulWidget {
     this.onLongPress,
     this.pressedScale = 0.82,
     this.semanticLabel,
+    this.rippleShape = const CircleBorder(),
   });
 
   final Widget child;
@@ -19,6 +22,9 @@ class PressScale extends StatefulWidget {
   final VoidCallback? onLongPress;
   final double pressedScale;
   final String? semanticLabel;
+
+  /// Bounds the ripple to the child's outline.
+  final ShapeBorder rippleShape;
 
   @override
   State<PressScale> createState() => _PressScaleState();
@@ -81,7 +87,10 @@ class _PressScaleState extends State<PressScale> with SingleTickerProviderStateM
         child: GestureDetector(
           onTap: widget.onTap,
           onLongPress: widget.onLongPress,
-          child: ScaleTransition(scale: _controller, child: widget.child),
+          child: ScaleTransition(
+            scale: _controller,
+            child: PointerRipple(shape: widget.rippleShape, enabled: widget.onTap != null, child: widget.child),
+          ),
         ),
       ),
     );

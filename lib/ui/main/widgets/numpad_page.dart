@@ -9,6 +9,7 @@ import '../dims.dart';
 import '../remote_controller.dart';
 import 'circle_button.dart';
 import 'fill_viewport_page.dart';
+import 'ripple.dart';
 
 /// The numpad page (spec §3.4, §5 "Numpad"): dialer grid, echo readout,
 /// CH rocker, guide/info/cc/exit row and the close button back to the
@@ -305,6 +306,10 @@ class CircleButtonLikeKey extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         child: InkWell(
           borderRadius: BorderRadius.circular(18),
+          // The app theme sets NoSplash, which would otherwise leave these keys without a ripple
+          splashFactory: InkRipple.splashFactory,
+          splashColor: rippleColorOf(context),
+          highlightColor: Colors.transparent,
           onTap: onTap,
           child: Container(
             width: width,

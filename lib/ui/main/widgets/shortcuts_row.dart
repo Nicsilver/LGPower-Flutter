@@ -77,6 +77,7 @@ class _ShortcutPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return PressScale(
       pressedScale: 0.95,
+      rippleShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       onTap: onTap,
       semanticLabel: title,
       child: Container(

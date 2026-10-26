@@ -30,6 +30,7 @@ import 'widgets/fill_viewport_page.dart';
 import 'widgets/keyboard_sheet.dart';
 import 'widgets/level_pill.dart';
 import 'widgets/numpad_page.dart';
+import 'widgets/ripple.dart';
 import 'widgets/shortcuts_row.dart';
 import 'widgets/touchpad_overlay.dart';
 import 'whats_new.dart';
@@ -620,19 +621,21 @@ class _MainScreenState extends State<MainScreen>
           GestureDetector(
             key: _gearKey,
             onTap: () => unawaited(_openSettings()),
-            child: Semantics(
-              button: true,
-              label: 'App Settings',
-              child: Opacity(
-                opacity: 0.35,
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Center(
-                    child: AppIcon(
-                      'ic_settings',
-                      size: 24,
-                      color: theme.primaryText,
+            child: PointerRipple(
+              child: Semantics(
+                button: true,
+                label: 'App Settings',
+                child: Opacity(
+                  opacity: 0.35,
+                  child: SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: Center(
+                      child: AppIcon(
+                        'ic_settings',
+                        size: 24,
+                        color: theme.primaryText,
+                      ),
                     ),
                   ),
                 ),
