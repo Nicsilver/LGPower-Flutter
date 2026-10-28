@@ -36,6 +36,9 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(56, '1.41.1', '2026-10-28', [
+      'Arrow keys show one press highlight again instead of two',
+    ]),
     Release(55, '1.41.1', '2026-10-28', [
       'The app is now called Tiny TV Remote',
     ]),
