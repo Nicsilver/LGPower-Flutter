@@ -111,7 +111,7 @@ void main() {
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
     const MethodChannel('dev.fluttercommunity.plus/package_info'),
     (call) async => <String, dynamic>{
-      'appName': 'Power Remote',
+      'appName': 'Tiny TV Remote',
       'packageName': 'com.nic.lgpower',
       'version': '1.0.0',
       'buildNumber': '1',
@@ -357,7 +357,7 @@ void main() {
 
     testWidgets('long-pressing the About card opens the test when a TV is paired', (tester) async {
       await openSettings(tester, paired: true);
-      await tester.longPress(find.text('Power Remote'));
+      await tester.longPress(find.text('Tiny TV Remote'));
       await tester.pump(const Duration(milliseconds: 500));
       expect(find.byType(KeyboardTestScreen), findsOneWidget);
       expect(find.text('Start'), findsOneWidget);
@@ -365,7 +365,7 @@ void main() {
 
     testWidgets('without a pairing the long-press does nothing', (tester) async {
       await openSettings(tester, paired: false);
-      await tester.longPress(find.text('Power Remote'));
+      await tester.longPress(find.text('Tiny TV Remote'));
       await tester.pump(const Duration(milliseconds: 500));
       expect(find.byType(KeyboardTestScreen), findsNothing);
     });

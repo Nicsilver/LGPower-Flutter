@@ -4,8 +4,8 @@ import 'package:lgpower/core/contact_mail.dart';
 void main() {
   test('subject names the app and version', () {
     expect(
-      ContactMail.subject(appName: 'Power Remote', version: '1.40.7'),
-      'Power Remote feedback (1.40.7)',
+      ContactMail.subject(appName: 'Tiny TV Remote', version: '1.40.7'),
+      'Tiny TV Remote feedback (1.40.7)',
     );
   });
 
@@ -17,11 +17,11 @@ void main() {
       phone: 'iPhone 15',
     );
     final uri = ContactMail.uri(
-      subject: ContactMail.subject(appName: 'Power Remote', version: '1.40.7'),
+      subject: ContactMail.subject(appName: 'Tiny TV Remote', version: '1.40.7'),
       body: body,
     );
     final text = uri.toString();
-    expect(text, startsWith('mailto:nic.silver@hotmail.dk?subject=Power%20Remote%20feedback%20(1.40.7)&body=%0A%0A%0A'));
+    expect(text, startsWith('mailto:nic.silver@hotmail.dk?subject=Tiny%20TV%20Remote%20feedback%20(1.40.7)&body=%0A%0A%0A'));
     expect(text, isNot(contains('+')));
     expect(uri.queryParameters['body'], body);
     expect(body, contains('App: 1.40.7 (53)'));

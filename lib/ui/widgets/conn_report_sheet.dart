@@ -37,7 +37,7 @@ Future<String> _collect(WebOsClient client, void Function(String) onStage) async
   final (os, phone) = await ContactMail.deviceInfo();
   const lockName = 'low-latency';
   return ConnReport.finish(ReportInputs(
-    appName: 'LG Power (Flutter)',
+    appName: 'Tiny TV Remote',
     versionName: versionName,
     versionCode: versionCode,
     phone: phone,

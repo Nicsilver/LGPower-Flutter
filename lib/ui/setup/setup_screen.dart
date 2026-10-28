@@ -305,7 +305,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 const SizedBox(height: 24),
               ],
               Text(
-                'Power Remote',
+                'Tiny TV Remote',
                 style: TextStyle(
                   fontSize: 30,
                   fontWeight: FontWeight.bold,

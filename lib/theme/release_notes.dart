@@ -36,6 +36,9 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(55, '1.41.1', '2026-10-28', [
+      'The app is now called Tiny TV Remote',
+    ]),
     Release(54, '1.41.0', '2026-10-26', [
       'Service menu over Wi-Fi, so it works on any phone',
       'The IR service menu has its own page',

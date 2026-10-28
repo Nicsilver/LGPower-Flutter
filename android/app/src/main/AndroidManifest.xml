@@ -10,7 +10,7 @@
     <uses-permission android:name="com.android.vending.BILLING" tools:node="remove"/>
     <uses-feature android:name="android.hardware.consumerir" android:required="false"/>
     <application
-        android:label="Power Remote"
+        android:label="Tiny Remote"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

@@ -49,7 +49,7 @@ class AboutHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Power Remote',
+                      'Tiny TV Remote',
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w500,
