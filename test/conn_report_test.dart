@@ -77,7 +77,7 @@ void main() {
         'cmd session died: cause=own close age=1ms sinceRx=never pointer=none',
       ),
     ])).split('\n');
-    expect(lines.first, 'LG Power connection report');
+    expect(lines.first, 'Tiny TV Remote connection report');
     expect(lines[1], 'App: LG Power (Flutter) 1.40.3 (versionCode 49)');
     expect(lines, contains('Wi-Fi: 5 GHz, RSSI -52 dBm, link speed 866 Mbps'));
     expect(lines, contains('Command connection: opened and registered in 183 ms'));

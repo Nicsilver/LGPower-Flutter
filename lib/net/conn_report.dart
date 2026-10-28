@@ -129,7 +129,7 @@ class ConnReport {
 
   static String render(ReportInputs r) {
     final out = <String>[
-      'LG Power connection report',
+      'Tiny TV Remote connection report',
       'App: ${r.appName} ${r.versionName} (versionCode ${r.versionCode})',
       'Phone: ${r.phone}',
       'OS: ${r.os}',
