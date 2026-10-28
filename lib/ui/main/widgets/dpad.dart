@@ -8,16 +8,16 @@ import '../../../theme/theme_manager.dart';
 import '../../widgets/app_icon.dart';
 import '../remote_controller.dart';
 import 'circle_button.dart';
-import 'ripple.dart';
 
 enum _Sector { up, right, down, left }
 
 /// The d-pad ring, wedge highlight and OK button (spec §3.1 g2, §5). The
 /// four arrows skip the global press-scale animation on purpose -- Android's
 /// `setDpadRepeatListener` installs its own touch handling *before*
-/// `applyPressAnimations` would have reached them, so the feedback is the
-/// quarter-circle sector highlight plus a ripple. OK is a plain button and keeps the
-/// scale animation via [CircleButton].
+/// `applyPressAnimations` would have reached them, so the only feedback is
+/// the quarter-circle sector highlight (no ripple on top, it doubled the
+/// indicator). OK is a plain button and keeps the scale animation and ripple
+/// via [CircleButton].
 class Dpad extends StatefulWidget {
   const Dpad({super.key, required this.controller, required this.size, required this.okSize});
 
@@ -98,12 +98,10 @@ class _DpadState extends State<Dpad> {
           child: SizedBox(
             width: 68,
             height: 68,
-            child: PointerRipple(
-              child: Semantics(
-                button: true,
-                label: semanticLabel,
-                child: Center(child: AppIcon(icon, size: 24, color: iconColor)),
-              ),
+            child: Semantics(
+              button: true,
+              label: semanticLabel,
+              child: Center(child: AppIcon(icon, size: 24, color: iconColor)),
             ),
           ),
         ),

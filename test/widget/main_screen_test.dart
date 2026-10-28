@@ -16,6 +16,7 @@ import 'package:lgpower/ui/main/remote_controller.dart';
 import 'package:lgpower/ui/main/widgets/dpad.dart';
 import 'package:lgpower/ui/main/widgets/level_pill.dart';
 import 'package:lgpower/ui/main/widgets/numpad_page.dart';
+import 'package:lgpower/ui/main/widgets/ripple.dart';
 import 'package:lgpower/ui/main/widgets/touchpad_overlay.dart';
 
 const _packageInfoChannel = MethodChannel(
@@ -289,6 +290,19 @@ void main() {
       await tester.pump();
       expect(find.byType(Dpad), findsOneWidget);
       expect(find.byType(TouchpadPad), findsNothing);
+
+      // The sector highlight is the arrows' press indicator; a ripple would double it
+      for (final label in ['Up', 'Down', 'Left', 'Right']) {
+        expect(
+          find.ancestor(of: find.bySemanticsLabel(label), matching: find.byType(PointerRipple)),
+          findsNothing,
+          reason: label,
+        );
+      }
+      expect(
+        find.ancestor(of: find.text('OK'), matching: find.byType(PointerRipple)),
+        findsOneWidget,
+      );
 
       await tester.tap(find.bySemanticsLabel('Up'));
       await tester.pump();
