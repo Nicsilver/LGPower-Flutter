@@ -84,8 +84,13 @@ class FakeWebOsClient extends WebOsClient {
     return const Success();
   }
 
+  final List<int> setBrightnessCalls = [];
+
   @override
-  Future<Result> setBrightness(int level) async => const Success();
+  Future<Result> setBrightness(int level) async {
+    setBrightnessCalls.add(level);
+    return const Success();
+  }
 
   @override
   Future<VolumeState?> getVolume() async => null;
@@ -326,6 +331,67 @@ void main() {
 
       expect(find.text('100'), findsOneWidget);
       expect(client.setVolumeCalls, contains(100));
+    });
+  });
+
+  group('brightness swipe setting', () {
+    Future<(FakeWebOsClient, Rect)> pumpWithSwipe(
+      WidgetTester tester, {
+      required bool swipe,
+    }) async {
+      final prefs = await _freshPrefs();
+      await prefs.setBrightnessSwipe(swipe);
+      final client = FakeWebOsClient(prefs);
+      await _pumpMainScreen(tester, prefs: prefs, client: client);
+      final rect = tester.getRect(
+        find.descendant(
+          of: find.byType(LevelPill).last,
+          matching: find.byType(Listener),
+        ),
+      );
+      return (client, rect);
+    }
+
+    testWidgets('off: a drag sends nothing and a short swipe is not a tap', (
+      tester,
+    ) async {
+      final (client, rect) = await pumpWithSwipe(tester, swipe: false);
+
+      var gesture = await tester.startGesture(rect.center);
+      await gesture.moveTo(Offset(rect.center.dx, rect.top));
+      await gesture.up();
+      gesture = await tester.startGesture(
+        Offset(rect.center.dx, rect.top + rect.height * 0.3),
+      );
+      await gesture.moveTo(Offset(rect.center.dx, rect.top + rect.height * 0.1));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(client.setBrightnessCalls, isEmpty);
+    });
+
+    testWidgets('on: the same drag sends the level', (tester) async {
+      final (client, rect) = await pumpWithSwipe(tester, swipe: true);
+
+      final gesture = await tester.startGesture(rect.center);
+      await gesture.moveTo(Offset(rect.center.dx, rect.top));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(client.setBrightnessCalls, contains(100));
+    });
+
+    testWidgets('off: plain taps on the halves still step the brightness', (
+      tester,
+    ) async {
+      final (client, rect) = await pumpWithSwipe(tester, swipe: false);
+
+      await tester.tapAt(Offset(rect.center.dx, rect.top + rect.height * 0.1));
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.tapAt(Offset(rect.center.dx, rect.bottom - rect.height * 0.1));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(client.setBrightnessCalls.length, 2);
     });
   });
 

@@ -1005,6 +1005,7 @@ class _MainScreenState extends State<MainScreen>
                 bottomSemanticLabel: 'Brightness Down',
                 onTapUp: _controller.brightnessTapUp,
                 onTapDown: _controller.brightnessTapDown,
+                swipeEnabled: _controller.brightnessSwipe,
                 onDragMove: _controller.brightnessDragMove,
                 onDragEnd: _controller.brightnessDragEnd,
               ),

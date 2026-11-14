@@ -64,6 +64,11 @@ class Prefs {
   bool get volumeSwipe => _sp.getBool('volume_swipe') ?? true;
   Future<void> setVolumeSwipe(bool value) => _sp.setBool('volume_swipe', value);
 
+  /// Same as [volumeSwipe] for the brightness pill.
+  bool get brightnessSwipe => _sp.getBool('brightness_swipe') ?? true;
+  Future<void> setBrightnessSwipe(bool value) =>
+      _sp.setBool('brightness_swipe', value);
+
   int get lastVolume => _sp.getInt('last_volume') ?? -1;
   Future<void> setLastVolume(int value) => _sp.setInt('last_volume', value);
 

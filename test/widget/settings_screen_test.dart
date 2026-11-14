@@ -132,6 +132,37 @@ void main() {
       );
     });
 
+    testWidgets(
+        'the swipe-to-change-brightness row shows only with the brightness pill and keeps its pref',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({'brightness_swipe': false});
+      final (prefs, client, controller) = await _harness();
+      await tester.pumpWidget(_app(client, controller));
+      await tester.pump();
+
+      expect(find.text('Swipe to change brightness'), findsOneWidget);
+      expect(
+        find.text('Turn off to stop accidental brightness jumps'),
+        findsOneWidget,
+      );
+      expect(
+        (tester.widget(find.byType(AppSwitch).at(3)) as AppSwitch).value,
+        isFalse,
+      );
+
+      await tester.tap(find.text('Channel buttons instead of brightness'));
+      await tester.pump();
+      expect(find.text('Swipe to change brightness'), findsNothing);
+      expect(prefs.brightnessSwipe, isFalse);
+
+      await tester.tap(find.text('Channel buttons instead of brightness'));
+      await tester.pump();
+      expect(find.text('Swipe to change brightness'), findsOneWidget);
+      await tester.tap(find.text('Swipe to change brightness'));
+      await tester.pump();
+      expect(prefs.brightnessSwipe, isTrue);
+    });
+
     testWidgets('a pre-1.35 channel switch pref still reads as channel', (
       tester,
     ) async {

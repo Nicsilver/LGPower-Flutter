@@ -75,6 +75,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _keepScreenOn = false;
   bool _padInsteadOfDpad = false;
   bool _volumeSwipe = true;
+  bool _brightnessSwipe = true;
 
   List<TvApp> _apps = const [];
   List<TvApp> _selected = const [];
@@ -92,6 +93,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _keepScreenOn = prefs.keepScreenOn;
     _padInsteadOfDpad = prefs.padInsteadOfDpad;
     _volumeSwipe = prefs.volumeSwipe;
+    _brightnessSwipe = prefs.brightnessSwipe;
     _selected = widget.client.loadShortcuts();
     _apps = List.of(_selected);
     _loadVersion();
@@ -643,6 +645,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           subtitle: 'Turn off to stop accidental volume jumps',
         ),
         const RowDivider(),
+        // The brightness pill only exists while the right pill is on brightness.
+        if (!_channelPill) ...[
+          _switchRow(
+            theme,
+            'Swipe to change brightness',
+            _brightnessSwipe,
+            (v) {
+              setState(() => _brightnessSwipe = v);
+              unawaited(widget.client.prefs.setBrightnessSwipe(v));
+            },
+            subtitle: 'Turn off to stop accidental brightness jumps',
+          ),
+          const RowDivider(),
+        ],
         _switchRow(
           theme,
           'Keep screen on',
