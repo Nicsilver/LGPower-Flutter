@@ -969,6 +969,7 @@ class _MainScreenState extends State<MainScreen>
           bottomSemanticLabel: 'Volume Down',
           onTapUp: _controller.volumeTapUp,
           onTapDown: _controller.volumeTapDown,
+          swipeEnabled: _controller.volumeSwipe,
           onDragMove: _controller.volumeDragMove,
           onDragEnd: _controller.volumeDragEnd,
         ),

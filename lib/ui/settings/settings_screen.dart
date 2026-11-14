@@ -74,6 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _channelPill = false;
   bool _keepScreenOn = false;
   bool _padInsteadOfDpad = false;
+  bool _volumeSwipe = true;
 
   List<TvApp> _apps = const [];
   List<TvApp> _selected = const [];
@@ -90,6 +91,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _channelPill = RightPill.get(prefs) == RightPill.channel;
     _keepScreenOn = prefs.keepScreenOn;
     _padInsteadOfDpad = prefs.padInsteadOfDpad;
+    _volumeSwipe = prefs.volumeSwipe;
     _selected = widget.client.loadShortcuts();
     _apps = List.of(_selected);
     _loadVersion();
@@ -628,6 +630,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             unawaited(widget.client.prefs.setPadInsteadOfDpad(v));
           },
           subtitle: 'Replaces the arrows with a pointer pad',
+        ),
+        const RowDivider(),
+        _switchRow(
+          theme,
+          'Swipe to change volume',
+          _volumeSwipe,
+          (v) {
+            setState(() => _volumeSwipe = v);
+            unawaited(widget.client.prefs.setVolumeSwipe(v));
+          },
+          subtitle: 'Turn off to stop accidental volume jumps',
         ),
         const RowDivider(),
         _switchRow(

@@ -76,8 +76,13 @@ class FakeWebOsClient extends WebOsClient {
     return const Success();
   }
 
+  final List<int> setVolumeCalls = [];
+
   @override
-  Future<Result> setVolume(int level) async => const Success();
+  Future<Result> setVolume(int level) async {
+    setVolumeCalls.add(level);
+    return const Success();
+  }
 
   @override
   Future<Result> setBrightness(int level) async => const Success();
@@ -241,6 +246,86 @@ void main() {
       await tester.pump();
 
       expect(find.text('100'), findsOneWidget);
+    });
+  });
+
+  group('volume swipe setting', () {
+    Future<(FakeWebOsClient, Rect)> pumpWithSwipe(
+      WidgetTester tester, {
+      required bool swipe,
+    }) async {
+      final prefs = await _freshPrefs();
+      await prefs.setLastVolume(20);
+      await prefs.setLastMuted(false);
+      await prefs.setVolumeSwipe(swipe);
+      final client = FakeWebOsClient(prefs);
+      await _pumpMainScreen(tester, prefs: prefs, client: client);
+      final rect = tester.getRect(
+        find.descendant(
+          of: find.byType(LevelPill).first,
+          matching: find.byType(Listener),
+        ),
+      );
+      return (client, rect);
+    }
+
+    testWidgets('off: a vertical drag changes nothing and sends nothing', (
+      tester,
+    ) async {
+      final (client, rect) = await pumpWithSwipe(tester, swipe: false);
+
+      final gesture = await tester.startGesture(rect.center);
+      await gesture.moveTo(Offset(rect.center.dx, rect.top));
+      await gesture.up();
+      // Past the 50ms send tick, in case a drag loop was started.
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('20'), findsOneWidget);
+      expect(client.setVolumeCalls, isEmpty);
+      expect(client.pressedKeys, isEmpty);
+    });
+
+    testWidgets('off: a short swipe starting in the top half is not a tap', (
+      tester,
+    ) async {
+      final (client, rect) = await pumpWithSwipe(tester, swipe: false);
+
+      final gesture = await tester.startGesture(
+        Offset(rect.center.dx, rect.top + rect.height * 0.3),
+      );
+      await gesture.moveTo(Offset(rect.center.dx, rect.top + rect.height * 0.1));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('20'), findsOneWidget);
+      expect(client.pressedKeys, isEmpty);
+    });
+
+    testWidgets('off: plain taps on both halves still step the volume', (
+      tester,
+    ) async {
+      final (client, rect) = await pumpWithSwipe(tester, swipe: false);
+
+      await tester.tapAt(Offset(rect.center.dx, rect.top + rect.height * 0.1));
+      await tester.pump();
+      expect(find.text('21'), findsOneWidget);
+      await tester.tapAt(Offset(rect.center.dx, rect.bottom - rect.height * 0.1));
+      await tester.pump();
+
+      expect(find.text('20'), findsOneWidget);
+      expect(client.pressedKeys, ['VOLUMEUP', 'VOLUMEDOWN']);
+    });
+
+    testWidgets('on: the same drag sets the level and sends it', (tester) async {
+      final (client, rect) = await pumpWithSwipe(tester, swipe: true);
+
+      final gesture = await tester.startGesture(rect.center);
+      await gesture.moveTo(Offset(rect.center.dx, rect.top));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('100'), findsOneWidget);
+      expect(client.setVolumeCalls, contains(100));
     });
   });
 

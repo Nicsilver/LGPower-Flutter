@@ -15,6 +15,8 @@ import 'fill_viewport_page.dart';
 /// Three modes selected by the caller:
 /// - slider ([sliderEnabled] true, [channelMode] false): drag sets the level
 ///   continuously, a plain tap steps by whatever [onTapUp]/[onTapDown] do.
+///   With [swipeEnabled] false a drag does nothing and its release is not a
+///   tap either; plain taps still step.
 /// - button ([sliderEnabled] false): no drag; the half tapped fires
 ///   immediately on pointer-down and repeats every 120ms after a 400ms hold.
 /// - channel ([channelMode] true): no drag, no repeat; the half tapped fires
@@ -34,6 +36,7 @@ class LevelPill extends StatefulWidget {
     this.iconSize = 28,
     this.sliderEnabled = true,
     this.channelMode = false,
+    this.swipeEnabled = true,
     this.onTapUp,
     this.onTapDown,
     this.onDragMove,
@@ -56,6 +59,7 @@ class LevelPill extends StatefulWidget {
   final double iconSize;
   final bool sliderEnabled;
   final bool channelMode;
+  final bool swipeEnabled;
 
   /// Fired for the top half: drag-disabled tap, button-mode repeat tick, or
   /// (in channel mode) the up-half release.
@@ -71,6 +75,8 @@ class LevelPill extends StatefulWidget {
 class _LevelPillState extends State<LevelPill> {
   double? _startY;
   bool _dragging = false;
+  // Swiping is off and the finger travelled: neither a drag nor a tap.
+  bool _swipeIgnored = false;
   int _lastHapticLevel = -1;
   bool _showTop = false;
   bool _showBottom = false;
@@ -108,6 +114,7 @@ class _LevelPillState extends State<LevelPill> {
     final y = event.localPosition.dy;
     _startY = y;
     _dragging = false;
+    _swipeIgnored = false;
     _lastHapticLevel = -1;
     final isTop = y < widget.height / 2;
     setState(() {
@@ -131,9 +138,13 @@ class _LevelPillState extends State<LevelPill> {
   void _onMove(PointerMoveEvent event) {
     if (widget.channelMode || !widget.sliderEnabled) return;
     final y = event.localPosition.dy;
-    if (!_dragging && (y - _startY!).abs() > 10) {
+    if (!_dragging && !_swipeIgnored && (y - _startY!).abs() > 10) {
       setState(() {
-        _dragging = true;
+        if (widget.swipeEnabled) {
+          _dragging = true;
+        } else {
+          _swipeIgnored = true;
+        }
         _showTop = false;
         _showBottom = false;
       });
@@ -163,7 +174,7 @@ class _LevelPillState extends State<LevelPill> {
     } else if (widget.sliderEnabled) {
       if (_dragging) {
         widget.onDragEnd?.call(_levelFromY(y));
-      } else {
+      } else if (!_swipeIgnored) {
         _fireHalf(isTop);
       }
     }

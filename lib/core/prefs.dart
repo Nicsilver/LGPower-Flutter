@@ -60,6 +60,10 @@ class Prefs {
   Future<void> setPadInsteadOfDpad(bool value) =>
       _sp.setBool('touchpad_instead_of_dpad', value);
 
+  /// Whether dragging on the volume pill sets the level; off leaves only taps.
+  bool get volumeSwipe => _sp.getBool('volume_swipe') ?? true;
+  Future<void> setVolumeSwipe(bool value) => _sp.setBool('volume_swipe', value);
+
   int get lastVolume => _sp.getInt('last_volume') ?? -1;
   Future<void> setLastVolume(int value) => _sp.setInt('last_volume', value);
 
