@@ -36,6 +36,9 @@ class ReleaseNotes {
 
   // Newest first — ported verbatim from the Kotlin source (spec 5.3).
   static const List<Release> all = [
+    Release(57, '1.42.0', '2026-11-15', [
+      "Settings: new switches to turn off swiping to change the volume or brightness, so the pills can't jump by accident. Taps still work",
+    ]),
     Release(56, '1.41.1', '2026-10-28', [
       'Arrow keys show one press highlight again instead of two',
     ]),
